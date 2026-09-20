@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Reclaiming #1 in the Ultimate Tic-Tac-Toe Arena</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/light.css">
+    <style>
+      :root {
+        --background-body: #F5F5F5;
+      }
+
+      .post-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 1rem;
+        margin-bottom: 2.25rem;
+      }
+
+      .post-author {
+        margin: 0;
+        font-size: 1.618rem;
+        font-weight: 700;
+        text-decoration: none;
+        color: inherit;
+      }
+
+      .post-author:hover {
+        text-decoration: underline;
+      }
+
+      .post-header time {
+        font-size: 0.875rem;
+        font-weight: 400;
+        color: #6b7280;
+        background: none;
+        padding: 0;
+        border-radius: 0;
+      }
+
+      h1 {
+        font-size: 2.6rem;
+        font-weight: 800;
+        line-height: 1.1;
+        margin-bottom: 1rem;
+      }
+
+      .nowrap {
+        white-space: nowrap;
+      }
+
+      figure {
+        margin-top: 1.5rem;
+      }
+
+      figure img {
+        max-width: 100%;
+        height: auto;
+        margin: 0;
+      }
+
+      figcaption {
+        margin-top: 0.5rem;
+        font-size: 0.875rem;
+        text-align: center;
+      }
+
+      .uttt {
+        margin: 2.5rem 0;
+      }
+
+      .uttt-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+        max-width: 28rem;
+        margin: 0 auto 0.75rem;
+      }
+
+      .uttt-status {
+        margin: 0;
+        font-weight: 700;
+      }
+
+      .uttt-reset {
+        padding: 0.3rem 0.8rem;
+        font-size: 0.875rem;
+      }
+
+      .uttt-board {
+        --uttt-line: #2c2c2e;
+        position: relative;
+        max-width: 28rem;
+        margin: 0 auto;
+        aspect-ratio: 1;
+        user-select: none;
+      }
+
+      .uttt-minis {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-rows: repeat(3, minmax(0, 1fr));
+        width: 100%;
+        height: 100%;
+      }
+
+      .uttt-sketch {
+        position: absolute;
+        inset: 0;
+        display: block;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 1;
+      }
+
+      .uttt-mini {
+        position: relative;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-rows: repeat(3, minmax(0, 1fr));
+        box-sizing: border-box;
+        min-width: 0;
+        min-height: 0;
+        padding: 11%;
+      }
+
+      .uttt-cell {
+        all: unset;
+        box-sizing: border-box;
+        display: block;
+        width: 100%;
+        height: 100%;
+        min-width: 0;
+        min-height: 0;
+        background: transparent;
+        color: transparent;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+
+      .uttt-mini.active .uttt-cell:not(:disabled):hover {
+        background: rgba(0, 0, 0, 0.06);
+      }
+
+      .uttt-cell:disabled {
+        cursor: default;
+        opacity: 1;
+      }
+
+      .uttt-cell:active,
+      .uttt-cell:focus {
+        transform: none;
+        box-shadow: none;
+      }
+
+      .uttt-overlay {
+        position: absolute;
+        inset: 0;
+        display: none;
+        pointer-events: none;
+        background: rgba(245, 245, 245, 0.42);
+      }
+
+      .uttt-mini.won-x .uttt-overlay,
+      .uttt-mini.won-o .uttt-overlay,
+      .uttt-mini.drawn .uttt-overlay {
+        display: block;
+      }
+
+      .nnue {
+        margin: 1.75rem 0 2.5rem;
+        overflow-x: auto;
+      }
+
+      .nnue svg {
+        display: block;
+        width: 100%;
+        min-width: 44rem;
+        height: auto;
+      }
+
+      .nnue-width {
+        font-size: 1.15rem;
+        font-weight: 800;
+        fill: #2c2c2e;
+      }
+
+      .nnue-label,
+      .nnue-side-label {
+        font-size: 0.72rem;
+        fill: #4b5563;
+      }
+
+      .nnue-ellipsis {
+        font-size: 1rem;
+        fill: #6b7280;
+      }
+
+      .nnue-skip {
+        font-size: 0.8rem;
+        fill: #9ca3af;
+      }
+
+      .nnue-x,
+      .nnue-o {
+        font-size: 1.7rem;
+        font-weight: 800;
+      }
+
+      .nnue-x {
+        fill: #2563eb;
+      }
+
+      .nnue-o {
+        fill: #dc2626;
+      }
+
+      .nnue-brace {
+        fill: none;
+        stroke: #2c2c2e;
+        stroke-width: 1.4;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      .nnue-edge {
+        stroke: #2c2c2e;
+        stroke-width: 0.7;
+        opacity: 0.16;
+        fill: none;
+      }
+
+      .nnue-edge-out {
+        opacity: 0.28;
+        stroke-width: 0.9;
+      }
+
+      .nnue-node {
+        fill: var(--background-body);
+        stroke: #2c2c2e;
+        stroke-width: 1.5;
+      }
+
+      .nnue-box {
+        fill: var(--background-body);
+        stroke: #2c2c2e;
+        stroke-width: 1.6;
+      }
+
+      .nnue-box-label {
+        font-size: 1.05rem;
+        font-weight: 800;
+        fill: #2c2c2e;
+      }
+
+      .nnue-row-label {
+        font-size: 1.05rem;
+        font-weight: 800;
+        fill: #2c2c2e;
+      }
+
+      .nnue-arrow {
+        stroke: #2c2c2e;
+        stroke-width: 1.6;
+        fill: none;
+      }
+
+      .nnue-split {
+        stroke: #2c2c2e;
+        stroke-width: 1.5;
+      }
+
+      .footnotes {
+        margin-top: 3rem;
+        padding-top: 1rem;
+        border-top: 1px solid #d1d5db;
+        font-size: 0.875rem;
+        color: #4b5563;
+      }
+
+      .footnotes li {
+        margin-bottom: 0.5rem;
+      }
+
+      .footnote-back {
+        margin-left: 0.25rem;
+        text-decoration: none;
+      }
+
+      .tiny {
+        font-size: 0.65rem;
+      }
+
+      .code-block {
+        margin: 1.5rem 0;
+        padding: 1rem 1.25rem;
+        border: 1.5px solid #2c2c2e;
+        border-radius: 2px;
+        background: #fff;
+        font-size: 0.8125rem;
+        line-height: 1.55;
+        overflow-x: auto;
+      }
+
+      .code-block code {
+        background: none;
+        padding: 0;
+        font-size: inherit;
+        color: inherit;
+      }
+
+      .code-block .token.comment,
+      .code-block .token.prolog,
+      .code-block .token.doctype,
+      .code-block .token.cdata {
+        color: #6b7280;
+      }
+
+      .code-block .token.punctuation {
+        color: #4b5563;
+      }
+
+      .code-block .token.property,
+      .code-block .token.tag,
+      .code-block .token.constant,
+      .code-block .token.symbol,
+      .code-block .token.deleted {
+        color: #dc2626;
+      }
+
+      .code-block .token.boolean,
+      .code-block .token.number {
+        color: #b45309;
+      }
+
+      .code-block .token.selector,
+      .code-block .token.attr-name,
+      .code-block .token.string,
+      .code-block .token.char,
+      .code-block .token.builtin,
+      .code-block .token.inserted {
+        color: #047857;
+      }
+
+      .code-block .token.operator,
+      .code-block .token.entity,
+      .code-block .token.url,
+      .code-block .token.variable {
+        color: #2c2c2e;
+      }
+
+      .code-block .token.atrule,
+      .code-block .token.attr-value,
+      .code-block .token.function,
+      .code-block .token.class-name {
+        color: #2563eb;
+      }
+
+      .code-block .token.keyword {
+        color: #7c3aed;
+      }
+
+      .code-block .token.preprocessor,
+      .code-block .token.macro {
+        color: #9333ea;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="post-header">
+      <a class="post-author" href="../">Tom Alard</a>
+      <time datetime="2026-09-20">September 20, 2026</time>
+    </header>
+
+    <h1>Fighting for #1 in the Ultimate <span class="nowrap">Tic-Tac-Toe</span> Arena</h1>
+
+    <figure>
+      <img src="uttt-leaderboard.png" alt="Ultimate Tic-Tac-Toe Arena leaderboard">
+      <figcaption>
+        <a href="https://www.codingame.com/multiplayer/bot-programming/tic-tac-toe/leaderboard"><i>The live UTTT leaderboard</i></a>
+      </figcaption>
+    </figure>
+
+    <p>
+      On the 14th of March 2018, CodinGame released the Ultimate
+      <span class="nowrap">Tic-Tac-Toe</span> (UTTT) bot programming arena. Today, the arena
+      is considered by far the most competitive of its kind on CodinGame, and the #1 spot remains
+      fiercely contested between me and three other nerds with nothing better to do. But how did
+      things get to this point? What even <i>is</i> UTTT? And why is my submission in Python, a notoriously slow language?
+      All will be answered below.
+    </p>
+
+    <figure>
+      <img src="uttt-discord.png" alt="Top players discussing the UTTT arena">
+      <figcaption>Top CodinGame players discussing the UTTT arena</figcaption>
+    </figure>
+
+    <h2>CodinGame</h2>
+
+    <p>
+      The concept of a bot programming competition on CodinGame is simple: Build a program that plays the given
+      game, submit your code, and the arena matches you up against other users' bots to determine your ranking.
+      The site compiles and runs your code on the server, and communication with the game engine is done with
+      stdin/stdout.
+    </p>
+
+    <p>
+      The site stores all submissions indefinitely and runs hundreds of games per submission to
+      determine an accurate rating. To keep costs manageable, submissions face three hard constraints:
+    </p>
+
+    <ol>
+      <li>Maximum 100k characters of source code</li>
+      <li>A single (weak) vCPU</li>
+      <li>A 100 ms limit per turn</li>
+    </ol>
+
+    <p>
+      At first glance, these restrictions might feel very limiting if you're trying to build a serious bot,
+      but they're actually a stroke of unintended genius! Just this month,
+      <a href="https://stockfishchess.org/">Stockfish</a>'s testing framework
+      '<a href="https://tests.stockfishchess.org/tests">Fishtest</a>'
+      used over 73 CPU years of volunteered compute to test whether proposed changes
+      gain or lose Elo. Solo developers clearly don't have access to that kind of compute.
+    </p>
+
+    <p>
+      Luckily, the 1 vCPU/100 ms limit per turn makes it very easy to bang out
+      a few thousand self-play games on consumer hardware to figure out if a change was positive.
+      The 100k character limit is also very relevant: You cannot just show up with a massive neural network
+      trained on a GPU cluster, or a huge opening book. These limitations level the playing field, so that anyone
+      with a decent gaming PC can realistically compete at the highest level.
+    </p>
+
+    <h2>UTTT</h2>
+
+    <p>
+      Ultimate <span class="nowrap">Tic-Tac-Toe</span> is played on a 3×3 grid of mini-boards. The rules are simple:
+    </p>
+
+    <ul>
+      <li>Players take turns placing one piece on a mini-board</li>
+      <li>Crucially, the board you must play on is determined by the <b>cell your opponent just played in</b>
+        (e.g., play in the top-right cell → send your opponent to the top-right board)</li>
+      <li>Making a line on a mini-board wins that board for the player</li>
+      <li>Making a line on the macro-board wins the game</li>
+      <li>If you get sent to a board that is already won or full, you may instead play in <b>any open cell</b> on the entire board</li>
+    </ul>
+
+    <p>
+      To reduce the number of draws, the CodinGame arena adds one more rule: If all mini-boards are decided and no
+      player managed to make a line, the winner is the player that won the most mini-boards. If that is also tied
+      (e.g., 4 boards for <b>X</b>, 4 boards for <b>O</b>, 1 board drawn), then the game is declared a draw.
+    </p>
+
+    <p>
+      The rules can be a bit clunky to describe precisely, but they're very intuitive to grasp.
+      Try clicking around on the board below!
+    </p>
+
+    <div id="uttt" class="uttt"></div>
+    <script src="https://cdn.jsdelivr.net/npm/roughjs@4.6.6/bundled/rough.js"></script>
+    <script src="uttt.js"></script>
+
+    <p>
+      CodinGame hosts almost a hundred bot programming competitions, so why is UTTT special?
+      Well, the elegant ruleset makes it easy to pick up. Unlike in, say, chess, you don't have to worry
+      about implementing threefold repetition, the fifty-move rule, or castling rights correctly <i>and</i>
+      efficiently in every possible situation. In fact, my move generation logic only needs about 200 lines of code!
+    </p>
+
+    <p>
+      Additionally, the game is not <a href="https://en.wikipedia.org/wiki/Solved_game"> solved</a>. Opening
+      books, which many players dislike facing, don't really help either, as it is genuinely unclear what the
+      best move is as soon as ply 2.<sup><a href="#fn1" id="fnref1">1</a></sup> There is also no good, simple
+      heuristic evaluation function for a board position. You will often see top bots deciding not to claim
+      a mini-board when given the chance, or sacrificing one mini-board to get a better situation on another.
+      A classic minimax search that greedily tries to maximize some naive heuristic will play very poorly.
+      This makes the game a perfect candidate for
+      <a href="https://en.wikipedia.org/wiki/Monte_Carlo_tree_search">Monte Carlo Tree Search</a> (MCTS)<sup><a href="#fn2" id="fnref2">2</a></sup>
+      with random rollouts. With excellent performance engineering, it is possible to reach about top 50 on
+      the leaderboard with this simple architecture.
+    </p>
+
+    <p>
+      However, that's still far from the #1 spot. The current
+      <a href="https://en.wikipedia.org/wiki/TrueSkill">TrueSkill</a> gap on the leaderboard between the #1
+      and #50 bot is about 9, which implies an expected winrate of over 90% for the #1 bot. Even when the #50
+      bot gets to play with <b>X</b>, which has a massive advantage over <b>O</b> in UTTT<sup><a href="#fn3" id="fnref3">3</a></sup>,
+      it will still lose almost every single time.
+    </p>
+
+    <p>
+      So how do we break past the random rollout MCTS wall? Through neural network evaluation functions.
+    </p>
+
+    <h2>NNUE</h2>
+
+    <p>
+      Efficiently updatable neural networks, or
+      <a href="https://en.wikipedia.org/wiki/Efficiently_updatable_neural_network">NNUE</a>
+      (sometimes stylized as ƎUИИ), took the chess programming world by storm in early 2020.
+      NNUEs were found to be vastly superior at evaluating positions than the handcrafted evaluation
+      functions used in Stockfish and other engines. Today, most strong chess engines use an
+      NNUE.<sup><a href="#fn4" id="fnref4">4</a></sup>
+    </p>
+
+    <p>
+      So how does it work? Let's start with a simple 199 → 256 → 1
+      <a href="https://en.wikipedia.org/wiki/Multilayer_perceptron">multilayer perceptron</a><sup><a href="#fn5" id="fnref5">5</a></sup>
+    </p>
+
+    <figure class="nnue">
+      <svg id="nnue-svg" viewBox="-8 0 948 720" role="img" aria-labelledby="nnue-title">
+        <title id="nnue-title">A fully connected 199 → 256 → 1 network. Inputs are X and O occupancy, won boards, drawn boards, and the next board to play on.</title>
+        <g id="nnue-edges"></g>
+
+        <text class="nnue-width" x="368" y="28" text-anchor="middle">199</text>
+        <text class="nnue-width" x="620" y="28" text-anchor="middle">256</text>
+        <text class="nnue-width" x="840" y="28" text-anchor="middle">1</text>
+
+        <text class="nnue-x" x="12" y="176" text-anchor="middle" dominant-baseline="middle">X</text>
+        <path class="nnue-brace" d="M78 72 C58 72, 58 72, 58 92 L58 156 C58 168, 44 170, 32 176 C44 182, 58 184, 58 196 L58 260 C58 280, 58 280, 78 280"/>
+
+        <text class="nnue-o" x="12" y="384" text-anchor="middle" dominant-baseline="middle">O</text>
+        <path class="nnue-brace" d="M78 296 C58 296, 58 296, 58 316 L58 364 C58 376, 44 378, 32 384 C44 390, 58 392, 58 404 L58 452 C58 472, 58 472, 78 472"/>
+
+        <text class="nnue-label" x="338" y="80" text-anchor="end" dominant-baseline="middle">Top left board, top left square</text>
+        <text class="nnue-label" x="338" y="112" text-anchor="end" dominant-baseline="middle">Top left board, top middle square</text>
+        <text class="nnue-label" x="338" y="176" text-anchor="end" dominant-baseline="middle">Bottom right board, bottom right square</text>
+        <text class="nnue-label" x="338" y="208" text-anchor="end" dominant-baseline="middle">Won top left board</text>
+        <text class="nnue-label" x="338" y="272" text-anchor="end" dominant-baseline="middle">Won bottom right board</text>
+        <text class="nnue-label" x="338" y="304" text-anchor="end" dominant-baseline="middle">Top left board, top left square</text>
+        <text class="nnue-label" x="338" y="368" text-anchor="end" dominant-baseline="middle">Bottom right board, bottom right square</text>
+        <text class="nnue-label" x="338" y="400" text-anchor="end" dominant-baseline="middle">Won top left board</text>
+        <text class="nnue-label" x="338" y="464" text-anchor="end" dominant-baseline="middle">Won bottom right board</text>
+        <text class="nnue-label" x="338" y="496" text-anchor="end" dominant-baseline="middle">Top left board is drawn</text>
+        <text class="nnue-label" x="338" y="560" text-anchor="end" dominant-baseline="middle">Bottom right board is drawn</text>
+        <text class="nnue-label" x="338" y="592" text-anchor="end" dominant-baseline="middle">Next move is on top left board</text>
+        <text class="nnue-label" x="338" y="656" text-anchor="end" dominant-baseline="middle">Next move is on bottom right board</text>
+        <text class="nnue-label" x="338" y="688" text-anchor="end" dominant-baseline="middle">Next move is on any board</text>
+
+        <text class="nnue-ellipsis" x="368" y="144" text-anchor="middle" dominant-baseline="middle">⋮</text>
+        <text class="nnue-skip" x="352" y="144" text-anchor="end" dominant-baseline="middle">78</text>
+        <text class="nnue-ellipsis" x="368" y="240" text-anchor="middle" dominant-baseline="middle">⋮</text>
+        <text class="nnue-skip" x="352" y="240" text-anchor="end" dominant-baseline="middle">7</text>
+        <text class="nnue-ellipsis" x="368" y="336" text-anchor="middle" dominant-baseline="middle">⋮</text>
+        <text class="nnue-skip" x="352" y="336" text-anchor="end" dominant-baseline="middle">79</text>
+        <text class="nnue-ellipsis" x="368" y="432" text-anchor="middle" dominant-baseline="middle">⋮</text>
+        <text class="nnue-skip" x="352" y="432" text-anchor="end" dominant-baseline="middle">7</text>
+        <text class="nnue-ellipsis" x="368" y="528" text-anchor="middle" dominant-baseline="middle">⋮</text>
+        <text class="nnue-skip" x="352" y="528" text-anchor="end" dominant-baseline="middle">7</text>
+        <text class="nnue-ellipsis" x="368" y="624" text-anchor="middle" dominant-baseline="middle">⋮</text>
+        <text class="nnue-skip" x="352" y="624" text-anchor="end" dominant-baseline="middle">7</text>
+
+        <circle class="nnue-node" data-layer="in" cx="368" cy="80" r="9"/>
+        <circle class="nnue-node" data-layer="in" cx="368" cy="112" r="9"/>
+        <circle class="nnue-node" data-layer="in" cx="368" cy="176" r="9"/>
+        <circle class="nnue-node" data-layer="in" cx="368" cy="208" r="9"/>
+        <circle class="nnue-node" data-layer="in" cx="368" cy="272" r="9"/>
+        <circle class="nnue-node" data-layer="in" cx="368" cy="304" r="9"/>
+        <circle class="nnue-node" data-layer="in" cx="368" cy="368" r="9"/>
+        <circle class="nnue-node" data-layer="in" cx="368" cy="400" r="9"/>
+        <circle class="nnue-node" data-layer="in" cx="368" cy="464" r="9"/>
+        <circle class="nnue-node" data-layer="in" cx="368" cy="496" r="9"/>
+        <circle class="nnue-node" data-layer="in" cx="368" cy="560" r="9"/>
+        <circle class="nnue-node" data-layer="in" cx="368" cy="592" r="9"/>
+        <circle class="nnue-node" data-layer="in" cx="368" cy="656" r="9"/>
+        <circle class="nnue-node" data-layer="in" cx="368" cy="688" r="9"/>
+
+        <circle class="nnue-node" data-layer="hid" cx="620" cy="96" r="12"/>
+        <circle class="nnue-node" data-layer="hid" cx="620" cy="170" r="12"/>
+        <circle class="nnue-node" data-layer="hid" cx="620" cy="244" r="12"/>
+        <circle class="nnue-node" data-layer="hid" cx="620" cy="318" r="12"/>
+        <circle class="nnue-node" data-layer="hid" cx="620" cy="392" r="12"/>
+        <circle class="nnue-node" data-layer="hid" cx="620" cy="466" r="12"/>
+        <circle class="nnue-node" data-layer="hid" cx="620" cy="540" r="12"/>
+        <circle class="nnue-node" data-layer="hid" cx="620" cy="614" r="12"/>
+        <circle class="nnue-node" data-layer="hid" cx="620" cy="688" r="12"/>
+
+        <circle class="nnue-node nnue-node-out" data-layer="out" cx="840" cy="392" r="16"/>
+        <text class="nnue-side-label" x="868" y="392" dominant-baseline="middle">Output</text>
+      </svg>
+    </figure>
+    <script>
+      (function () {
+        var svg = document.getElementById("nnue-svg");
+        if (!svg) return;
+        var ns = "http://www.w3.org/2000/svg";
+        var g = document.getElementById("nnue-edges");
+        var inputs = svg.querySelectorAll("circle[data-layer='in']");
+        var hidden = svg.querySelectorAll("circle[data-layer='hid']");
+        var output = svg.querySelector("circle[data-layer='out']");
+        function line(x1, y1, x2, y2, className) {
+          var el = document.createElementNS(ns, "line");
+          el.setAttribute("x1", x1);
+          el.setAttribute("y1", y1);
+          el.setAttribute("x2", x2);
+          el.setAttribute("y2", y2);
+          el.setAttribute("class", className);
+          g.appendChild(el);
+        }
+        for (var i = 0; i < inputs.length; i++) {
+          for (var j = 0; j < hidden.length; j++) {
+            line(
+              inputs[i].getAttribute("cx"),
+              inputs[i].getAttribute("cy"),
+              hidden[j].getAttribute("cx"),
+              hidden[j].getAttribute("cy"),
+              "nnue-edge"
+            );
+          }
+        }
+        for (var k = 0; k < hidden.length; k++) {
+          line(
+            hidden[k].getAttribute("cx"),
+            hidden[k].getAttribute("cy"),
+            output.getAttribute("cx"),
+            output.getAttribute("cy"),
+            "nnue-edge nnue-edge-out"
+          );
+        }
+      })();
+    </script>
+
+    <p>
+      The input layer above is comprised entirely out of "one-hot" inputs. That means that each
+      input neuron takes either the value zero or one. For example, if <b>X</b> plays on [4, 4]
+      (the center square of the center board), we would update the input neuron with index
+      4*9 + 4 = 40 from zero to one.
+    </p>
+
+    <p>
+      The input layer is also set up such that you do not have to update many of the inputs when
+      a player makes a move. On an average move, you will only have to update three input neurons:
+      One for the square the player just played in, and two for the next board feature
+      (Set the next board and unset the previous one).
+    </p>
+
+    <p>
+      Combining these two features allows for a significant optimization. In a standard
+      multilayer perceptron, you'd have to recompute the 199x256 multiplications every single ply.
+      But because only a couple features change per move, you only have to <b>add and subtract weight slices</b>
+      from the hidden layer (called the accumulator)! Afterward, you only have to compute a simple
+      dot product to go from the 256-wide accumulator to the output neuron, which gives the evaluation of
+      the position. This is significantly faster than a naive implementation, and makes NNUEs viable.
+    </p>
+
+    <p>
+      If anything, NNUEs are even more beneficial in UTTT than in chess, as chess <i>does</i> have obvious heuristic
+      strategies to evaluate a position. If you're up a queen and a rook, you're probably going to win the game.
+      The same cannot be said for UTTT. For example, it regularly happens that one player is
+      up two mini-boards to zero, while having a completely lost position at the same time.
+      Because handcrafted evaluation functions are so bad, having a neural network, that has no trouble
+      evaluating such positions, is a huge advantage over other bots.
+    </p>
+
+    <p>
+      The NNUE above has about 50k parameters in total. My current bot uses a
+      (189→1024)x2 → 10 NNUE. Apart from increasing the size of the accumulator from 256 to 1024,
+      I've added two common NNUE tricks.
+    </p>
+
+    <p>
+      First off, instead of hardcoding features for <b>X</b> and <b>O</b>,
+      it's better to encode features relative to the side to move (STM) and the other player (NSTM).
+      This gives the NNUE a better understanding of tempo and which player can make the next move.
+      To support this new setup with efficient incremental updates, we now need to keep two accumulators
+      up to date. Since the other accumulator is already available anyway, we might as well let the NNUE
+      use it. This basically doubles the width of our accumulator, almost for free.
+    </p>
+
+    <p>
+      Secondly, the next board input features in our original 199 neuron input layer need a lot of
+      incremental updates, as this changes almost every turn. Therefore, let's move those 10 features out of
+      the input layer and into the output layer. At inference time, we'll only evaluate the single output
+      neuron that corresponds to the next board feature that is currently active. In my testing,
+      this "output bucketing" setup reduced loss, while also improving the performance of my bot.
+    </p>
+
+    <figure class="nnue">
+      <svg viewBox="0 0 920 400" role="img" aria-labelledby="nnue-dual-title">
+        <title id="nnue-dual-title">A (189 → 1024) × 2 → 10 NNUE. Side-to-move and not-side-to-move each have a 189 to 1024 layer; the two 1024 accumulators are concatenated into 2048 and scored by 10 output buckets.</title>
+        <defs>
+          <marker id="nnue-arrowhead" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M1 1 L7 4 L1 7" fill="none" stroke="#2c2c2e" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </marker>
+        </defs>
+
+        <text class="nnue-width" x="210" y="28" text-anchor="middle">2×189</text>
+        <text class="nnue-width" x="400" y="28" text-anchor="middle">2×1024</text>
+        <text class="nnue-width" x="610" y="28" text-anchor="middle">2048</text>
+
+        <text class="nnue-row-label" x="52" y="118" text-anchor="middle" dominant-baseline="middle">STM</text>
+        <text class="nnue-row-label" x="52" y="302" text-anchor="middle" dominant-baseline="middle">NSTM</text>
+
+        <line class="nnue-split" x1="110" y1="210" x2="500" y2="210"/>
+
+        <rect class="nnue-box" x="160" y="48" width="100" height="140" rx="2"/>
+        <text class="nnue-box-label" x="210" y="118" text-anchor="middle" dominant-baseline="middle">189</text>
+        <line class="nnue-arrow" x1="270" y1="118" x2="338" y2="118" marker-end="url(#nnue-arrowhead)"/>
+
+        <rect class="nnue-box" x="350" y="48" width="100" height="140" rx="2"/>
+        <text class="nnue-box-label" x="400" y="118" text-anchor="middle" dominant-baseline="middle">1024</text>
+
+        <rect class="nnue-box" x="160" y="232" width="100" height="140" rx="2"/>
+        <text class="nnue-box-label" x="210" y="302" text-anchor="middle" dominant-baseline="middle">189</text>
+        <line class="nnue-arrow" x1="270" y1="302" x2="338" y2="302" marker-end="url(#nnue-arrowhead)"/>
+
+        <rect class="nnue-box" x="350" y="232" width="100" height="140" rx="2"/>
+        <text class="nnue-box-label" x="400" y="302" text-anchor="middle" dominant-baseline="middle">1024</text>
+
+        <rect class="nnue-box" x="555" y="70" width="110" height="280" rx="2"/>
+        <line class="nnue-split" x1="555" y1="210" x2="665" y2="210"/>
+        <text class="nnue-box-label" x="610" y="140" text-anchor="middle" dominant-baseline="middle">1024</text>
+        <text class="nnue-box-label" x="610" y="280" text-anchor="middle" dominant-baseline="middle">1024</text>
+
+        <line class="nnue-arrow" x1="460" y1="118" x2="545" y2="140" marker-end="url(#nnue-arrowhead)"/>
+        <line class="nnue-arrow" x1="460" y1="302" x2="545" y2="280" marker-end="url(#nnue-arrowhead)"/>
+
+        <line class="nnue-arrow" x1="675" y1="210" x2="758" y2="210" marker-end="url(#nnue-arrowhead)"/>
+
+        <rect class="nnue-box" x="770" y="150" width="90" height="120" rx="2"/>
+        <text class="nnue-box-label" x="815" y="210" text-anchor="middle" dominant-baseline="middle">10</text>
+      </svg>
+    </figure>
+
+    <p>
+      This NNUE, trained on over 300 million positions generated from self-play, has about 215k parameters.
+      But wait a minute, the maximum character limit of a submission is 100k characters, how could
+      215k parameters ever fit?
+    </p>
+
+    <h2>The "Python" submission</h2>
+
+    <p>
+      Behold, my Python 3 CodinGame submission in all its glory:
+    </p>
+
+    <pre class="code-block"><code class="language-python">import os
+s=u"ॖﲏ⎊覙鞻駃兢酜퇏漽셿쉁净闏牴隌ﲌ├宧ᱣ銩␲ (95k UTF-16 characters...)"
+v={}
+B=0
+for c in range(256,0xFFF0):
+    if not 0xD800&lt;=c&lt;0xE000 and c not in(0x2028,0x2029,0xFEFF)and not 0xFDD0&lt;=c&lt;0xFDF0:v[c]=B;B+=1
+b=bytearray()
+for i in range(0,len(s),64):
+    a=0
+    for c in s[i:i+64]:a=a*B+v[ord(c)]
+    b+=a.to_bytes(127,"big")
+open("CG","wb").write(b[4:4+int.from_bytes(b[:4],"little")])
+os.chmod("CG",0o755)
+os.system("./CG")</code></pre>
+
+    <p>
+      Okay, what the hell is going on here? Well, first off, this is clearly not exactly a standard
+      Python submission. It could never be: Python is unbearably slow for heavy CPU work like this.
+      What we're actually doing is using Python to deliver the real payload: A compiled C binary,
+      maximally compressed with <a href="https://upx.github.io/">UPX</a>, and stripped down as much as possible.
+      This gives us the freedom to compile with clang instead of gcc (the default on CodinGame), with
+      whatever flags we'd like, and allows us to use PGO. All in all, this improves the number of sims per second
+      by about 20%! By using
+      <a href="https://lemire.me/blog/2022/11/25/making-all-your-integers-positive-with-zigzag-encoding/">zigzag encoding</a>
+      and aggressive quantization on the NNUE parameters, we can reduce the entire payload to under 200 KB.
+    </p>
+
+    <p>
+      But that is still above the 100k character limit. Therefore, we have to use another trick.
+      I've been careful to mention that CodinGame has a <b>character</b> limit, not
+      a <b>byte</b> limit. This means that a single UTF-16 character is counted as... one character!
+      With a little bit of packing fun, we can fit exactly 15.875 bits into each character, which is just
+      about enough to fit our submission into 95k characters! Combine that with the fact that CodinGame
+      inexplicably lets your program write to files and execute them, and the submission
+      works!<sup><a href="#fn6" id="fnref6">6</a></sup> Fair warning, sending a compiled payload like this
+      is banned for active contests. For bot programming games, I think it's fine.
+      <small class="tiny">Please don't ban me.</small>
+    </p>
+
+    <h2>Search</h2>
+
+    <p>
+      A good evaluation function is not enough, some sort of search algorithm is required to make a good bot.
+      This is where my bot is probably most distinct from other top competitors.
+      NNUEs are traditionally used in alpha-beta search algorithms, as the incremental updates perfectly
+      match how alpha-beta actually explores the game tree. Unfortunately, implementing a strong alpha-beta
+      search forces you to implement a ton of <a href="https://asteri.sm/files/2023-02-20-viri-wiki">extensions</a>,
+      and adds a bunch of tunable hyperparameters. That's not to say it cannot be done, <i>MrSubZero</i>
+      has a top 3 bot using alpha-beta plus an NNUE, but it takes a lot of skill and effort, and I'm too lazy for that.
+      I tried implementing an alpha-beta search, but stagnated at a 40% winrate against my current search.
+    </p>
+
+    <p>
+      Alternatively, MCTS works great out of the box: Just plug in your evaluation function, tune one or two
+      hyperparameters, and you're good to go. Unfortunately, MCTS has to do a lot of pointer chasing to select
+      and backpropagate nodes, and the way it explores the game tree means we cannot really use incremental
+      NNUE accumulator updates.
+    </p>
+
+    <p>
+      So instead, I first tried using
+      "<a href="https://www.codingame.com/playgrounds/55004/best-first-minimax-search-with-uct">jacekmax</a>",
+      an algorithm popularized on CodinGame by the user <i>jacek</i>. Amongst other things, it changes the
+      expansion step of MCTS so that we expand all children of the selected leaf instead of just one,
+      and then backpropagates the minimax value up the tree.
+      This is great news for our NNUE, as we can now build the accumulator once in the leaf node,
+      and then use incremental updates to evaluate all its children. Computationally, it's not as efficient
+      as alpha-beta, but we can use tricks to make it fast enough (like saving accumulator "checkpoints"
+      at nodes that reach a certain number of visits).
+    </p>
+
+    <p>
+      However, while tinkering with that, I somehow found out that my bot played much better when I mixed in
+      the backpropped minimax value with the simple average of the minimax values backpropped through that
+      node over all simulations, and used the combined value as the exploitation term in the selection step.
+      Somehow, as my bot got better, the optimal lambda value, which determines
+      how much weight to give to either term, slowly drifted to zero. In my current bot, I <i>only</i>
+      look at the simple average in the selection step. I haven't found any papers online describing this
+      algorithm, so I'm pretty sure it's not optimal and is just covering for some unknown weakness in
+      my NNUE or my code. I hope I'll have a better solution or explanation soon.
+    </p>
+
+    <h2>C engine</h2>
+
+    <p>
+      All the theory described above is good and well, but it still needs to be implemented with
+      efficient code. At very low time controls like on CodinGame, raw speed is important.
+      For move generation, the most important thing is to use
+      <a href="https://en.wikipedia.org/wiki/Bitboard">bitboards</a>. For the NNUE,
+      manually writing SIMD Intrinsics is intimidating, but worth it in terms of performance.
+      For example, here's the function that evaluates my NNUE, starting from an updated accumulator:
+    </p>
+
+    <pre class="code-block"><code class="language-c">static float evaluateAccumulators(const int16_t stmInputs[ACC_SIZE],
+                                  const int16_t nstmInputs[ACC_SIZE],
+                                  int bucket) {
+    const __m256i zero = _mm256_setzero_si256();
+    const __m256i qa = _mm256_set1_epi16(NN_QA);  // quantization factor
+    __m256i sumA = _mm256_setzero_si256();
+    __m256i sumB = _mm256_setzero_si256();
+    const int16_t* w = outputWeights[bucket];
+    for (int i = 0; i &lt; ACC_SIZE / 16; i += 2) {
+        // Load accumulator
+        __m256i a0 = _mm256_load_si256((const __m256i*) &amp;stmInputs[i * 16]);
+        __m256i a1 = _mm256_load_si256((const __m256i*) &amp;stmInputs[(i + 1) * 16]);
+        __m256i b0 = _mm256_load_si256((const __m256i*) &amp;nstmInputs[i * 16]);
+        __m256i b1 = _mm256_load_si256((const __m256i*) &amp;nstmInputs[(i + 1) * 16]);
+
+        // Clamp to [0, 1] in quantized space
+        a0 = _mm256_min_epi16(_mm256_max_epi16(a0, zero), qa);
+        a1 = _mm256_min_epi16(_mm256_max_epi16(a1, zero), qa);
+        b0 = _mm256_min_epi16(_mm256_max_epi16(b0, zero), qa);
+        b1 = _mm256_min_epi16(_mm256_max_epi16(b1, zero), qa);
+
+        // Load output weights for the correct bucket
+        __m256i wa0 = _mm256_load_si256((const __m256i*) &amp;w[i * 16]);
+        __m256i wa1 = _mm256_load_si256((const __m256i*) &amp;w[(i + 1) * 16]);
+        __m256i wb0 = _mm256_load_si256((const __m256i*) &amp;w[ACC_SIZE + i * 16]);
+        __m256i wb1 = _mm256_load_si256((const __m256i*) &amp;w[ACC_SIZE + (i + 1) * 16]);
+
+        // Apply Squared Clipped ReLU activation function and add dot product to running sum
+        sumA = _mm256_add_epi32(sumA, _mm256_madd_epi16(a0, _mm256_mullo_epi16(a0, wa0)));
+        sumA = _mm256_add_epi32(sumA, _mm256_madd_epi16(a1, _mm256_mullo_epi16(a1, wa1)));
+        sumB = _mm256_add_epi32(sumB, _mm256_madd_epi16(b0, _mm256_mullo_epi16(b0, wb0)));
+        sumB = _mm256_add_epi32(sumB, _mm256_madd_epi16(b1, _mm256_mullo_epi16(b1, wb1)));
+    }
+
+    // Convert back from quantized integers to floats
+    float partialEval = (float) hsum256(sumA) * NN_OUTPUT_SCALE
+                      + (float) hsum256(sumB) * NN_OUTPUT_SCALE;
+
+    // Apply output activation function (approximate sigmoid)
+    return hard_sigmoid(partialEval + outputBiases[bucket]);
+}</code></pre>
+
+    <h2>Future Work</h2>
+
+    <p>
+      So, was all of this effort enough to decisively take the #1 spot on the leaderboard?
+      Uh, not exactly. At the time of writing, <i>Daporan</i> holds the top spot with a 0.5 TrueSkill gap
+      over me at second place, while <i>MrSubZero</i> is hot on my heels in third place.
+    </p>
+
+    <p>
+      That being said, I see many more ways to improve my solution. For example, more training data appears
+      to always be better for NNUE training. Even though the parameter to sample ratio is already slightly
+      ridiculous at over 1:1000 (200k params, 300M positions), I've been letting my PC run the last few days,
+      and I'm going to try a training run with a couple billion positions soon. There are also more gains
+      to be made in the NNUE architecture: I could add multiple hidden layers or change to different activation
+      functions. Finally, there might be innovative solutions to try to squeeze more parameters into 100k
+      characters: Perhaps we could add a small loss term to the network which somehow penalizes sequences
+      of weights that compress poorly, paving the way for even bigger and better networks.
+    </p>
+
+    <ol class="footnotes">
+      <li id="fn1">
+        On ply 1, the first move from <b>X</b>, the only good move is to play the center square of the center board.
+        <a class="footnote-back" href="#fnref1" aria-label="Back to reference">↩</a>
+      </li>
+      <li id="fn2">
+        The search algorithm notably used by DeepMind's <a href="https://en.wikipedia.org/wiki/AlphaZero">AlphaZero</a>.
+        <a class="footnote-back" href="#fnref2" aria-label="Back to reference">↩</a>
+      </li>
+      <li id="fn3">
+        My self-play data shows that <b>X</b> wins about 73% of games, <b>O</b> wins 3.5% of games, and 23.5% of games are drawn.
+        <a class="footnote-back" href="#fnref3" aria-label="Back to reference">↩</a>
+      </li>
+      <li id="fn4">
+        <a href="https://lczero.org/">Leela Chess Zero</a> is an example of a strong chess engine that does not
+        use an NNUE, instead using an architecture similar to AlphaZero. However, Leela needs a GPU to be effective,
+        which we do not have at our disposal on CodinGame.
+        <a class="footnote-back" href="#fnref4" aria-label="Back to reference">↩</a>
+      </li>
+      <li id="fn5">
+        I once had a very embarrassing moment in an open office at work when I typed
+        <a href="https://www.google.com/search?udm=2&q=MLP">MLP</a> into Google Images,
+        hoping to find visualizations of a multilayer perceptron. Moral of the story:
+        Never abbreviate "multilayer perceptron".
+        <a class="footnote-back" href="#fnref5" aria-label="Back to reference">↩</a>
+      </li>
+      <li id="fn6">
+        Thanks to Agade's
+        <a href="https://github.com/Agade09/CG-Send-Binary/tree/base65536">CG Send Binary</a>
+        for the original idea.
+        <a class="footnote-back" href="#fnref6" aria-label="Back to reference">↩</a>
+      </li>
+    </ol>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-clike.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-c.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+  </body>
+</html>
