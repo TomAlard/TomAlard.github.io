@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Reclaiming #1 in the Ultimate Tic-Tac-Toe Arena</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/light.css">
+    <style>
+      :root {
+        --background-body: #F5F5F5;
+      }
+
+      .post-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 1rem;
+        margin-bottom: 2.25rem;
+      }
+
+      .post-author {
+        margin: 0;
+        font-size: 1.618rem;
+        font-weight: 700;
+        text-decoration: none;
+        color: inherit;
+      }
+
+      .post-author:hover {
+        text-decoration: underline;
+      }
+
+      .post-header time {
+        font-size: 0.875rem;
+        font-weight: 400;
+        color: #6b7280;
+        background: none;
+        padding: 0;
+        border-radius: 0;
+      }
+
+      h1 {
+        font-size: 2.6rem;
+        font-weight: 800;
+        line-height: 1.1;
+        margin-bottom: 1rem;
+      }
+
+      .nowrap {
+        white-space: nowrap;
+      }
+
+      figure {
+        margin-top: 1.5rem;
+      }
+
+      figure img {
+        max-width: 100%;
+        height: auto;
+        margin: 0;
+      }
+
+      figcaption {
+        margin-top: 0.5rem;
+        font-size: 0.875rem;
+        text-align: center;
+      }
+
+      .uttt {
+        margin: 2.5rem 0;
+      }
+
+      .uttt-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+        max-width: 28rem;
+        margin: 0 auto 0.75rem;
+      }
+
+      .uttt-status {
+        margin: 0;
+        font-weight: 700;
+      }
+
+      .uttt-reset {
+        padding: 0.3rem 0.8rem;
+        font-size: 0.875rem;
+      }
+
+      .uttt-board {
+        --uttt-line: #2c2c2c;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-rows: repeat(3, minmax(0, 1fr));
+        gap: 3px;
+        max-width: 28rem;
+        margin: 0 auto;
+        aspect-ratio: 1;
+        background: var(--uttt-line);
+        user-select: none;
+      }
+
+      .uttt-mini {
+        position: relative;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-rows: repeat(3, minmax(0, 1fr));
+        box-sizing: border-box;
+        min-width: 0;
+        min-height: 0;
+        gap: 0;
+        padding: 0.45rem;
+        background: var(--background-body);
+      }
+
+      .uttt-cell {
+        all: unset;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        height: 100%;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        background: transparent;
+        font-family: inherit;
+        font-size: clamp(0.95rem, 3.6vw, 1.35rem);
+        font-weight: 800;
+        line-height: 1;
+        color: transparent;
+        cursor: pointer;
+        touch-action: manipulation;
+        border-right: 1px solid var(--uttt-line);
+        border-bottom: 1px solid var(--uttt-line);
+        transition: opacity 0.15s ease, border-color 0.15s ease;
+      }
+
+      .uttt-cell:nth-child(3n) {
+        border-right: none;
+      }
+
+      .uttt-cell:nth-child(n + 7) {
+        border-bottom: none;
+      }
+
+      .uttt-mini:not(.active) .uttt-cell {
+        opacity: 0.38;
+        border-color: #9a9a9a;
+      }
+
+      .uttt-mini.active .uttt-cell:not(:disabled):hover {
+        background: #e8e8e8;
+      }
+
+      .uttt-cell:disabled {
+        cursor: default;
+        opacity: 1;
+      }
+
+      .uttt-cell.x {
+        color: #2563eb;
+      }
+
+      .uttt-cell.o {
+        color: #dc2626;
+      }
+
+      .uttt-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        font-size: clamp(2.2rem, 10vw, 3.4rem);
+        font-weight: 800;
+        line-height: 1;
+        pointer-events: none;
+        background: rgba(245, 245, 245, 0.42);
+      }
+
+      .uttt-mini.won-x .uttt-overlay,
+      .uttt-mini.won-o .uttt-overlay,
+      .uttt-mini.drawn .uttt-overlay {
+        display: flex;
+      }
+
+      .uttt-mini.won-x .uttt-overlay {
+        color: #2563eb;
+      }
+
+      .uttt-mini.won-o .uttt-overlay {
+        color: #dc2626;
+      }
+
+      .uttt-mini.drawn .uttt-overlay {
+        color: #6b7280;
+      }
+
+      .footnotes {
+        margin-top: 3rem;
+        padding-top: 1rem;
+        border-top: 1px solid #d1d5db;
+        font-size: 0.875rem;
+        color: #4b5563;
+      }
+
+      .footnotes li {
+        margin-bottom: 0.5rem;
+      }
+
+      .footnote-back {
+        margin-left: 0.25rem;
+        text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="post-header">
+      <a class="post-author" href="../">Tom Alard</a>
+      <time datetime="2026-09-19">September 19, 2026</time>
+    </header>
+
+    <h1>Reclaiming #1 in the Ultimate <span class="nowrap">Tic-Tac-Toe</span> Arena</h1>
+
+    <figure>
+      <img src="uttt-leaderboard.png" alt="Ultimate Tic-Tac-Toe Arena leaderboard">
+      <figcaption>
+        <a href="https://www.codingame.com/multiplayer/bot-programming/tic-tac-toe/leaderboard"><i>The live UTTT leaderboard</i></a>
+      </figcaption>
+    </figure>
+
+    <p>
+      On the 14th of March 2018, CodinGame released the Ultimate
+      <span class="nowrap">Tic-Tac-Toe</span> (UTTT) bot programming arena. Today, the arena
+      is considered by far the most competitive of its kind on CodinGame, and the #1 spot remains
+      fiercely contested between me and three other nerds with nothing better to do. But how did
+      things get to this point? What even <i>is</i> UTTT? And why is my submission in Python, a notoriously slow language?
+      All will be answered below.
+    </p>
+
+    <h2>CodinGame</h2>
+
+    <p>
+      The concept of a bot programming competition on CodinGame is simple: Build a program that plays the given
+      game, submit your code, and the arena matches you up against other users' bots to determine your ranking.
+      The site compiles and runs your code on the server, and communication with the game engine is done with
+      stdin/stdout.
+    </p>
+
+    <p>
+      The site stores all submissions indefinitely and runs hundreds of games per submission to
+      determine an accurate rating. To keep costs manageable, submissions face three hard constraints:
+    </p>
+
+    <ol>
+      <li>Maximum 100k characters of source code</li>
+      <li>A single (weak) vCPU</li>
+      <li>A 100 ms limit per turn</li>
+    </ol>
+
+    <p>
+      At first glance, these restrictions might feel very limiting if you're trying to build a serious bot,
+      but they're actually a stroke of unintended genius! Just this month,
+      <a href="https://stockfishchess.org/">Stockfish</a>'s testing framework
+      '<a href="https://tests.stockfishchess.org/tests">Fishtest</a>'
+      used over 73 CPU years of volunteered compute to test whether proposed changes
+      gain or lose Elo. Solo developers clearly don't have access to that kind of compute.
+    </p>
+
+    <p>
+      Luckily, the 1 vCPU/100 ms limit per turn makes it very easy to bang out
+      a few thousand self-play games on consumer hardware to figure out if a change was positive.
+      The 100k character limit is also very relevant: You cannot just show up with a massive neural network
+      trained on a GPU cluster, or a huge opening book. These limitations level the playing field, so that anyone
+      with a decent gaming PC can realistically compete at the highest level.
+    </p>
+
+    <h2>UTTT</h2>
+
+    <p>
+      Ultimate <span class="nowrap">Tic-Tac-Toe</span> is played on a 3×3 grid of mini-boards. The rules are simple:
+    </p>
+
+    <ul>
+      <li>Players take turns placing one piece on a mini-board</li>
+      <li>Crucially, the board you must play on is determined by the <b>cell your opponent just played in</b>
+        (e.g., play in the top-right cell → send your opponent to the top-right board)</li>
+      <li>Making a line on a mini-board wins that board for the player</li>
+      <li>Making a line on the macro-board wins the game</li>
+      <li>If you get sent to a board that is already won or full, you may instead play in <b>any open cell</b> on the entire board</li>
+    </ul>
+
+    <p>
+      To reduce the number of draws, the CodinGame arena adds one more rule: If all mini-boards are decided and no
+      player managed to make a line, the winner is the player that won the most mini-boards. If that is also tied
+      (e.g., 4 boards for <b>X</b>, 4 boards for <b>O</b>, 1 board drawn), then the game is declared a draw.
+    </p>
+
+    <p>
+      The rules can be a bit clunky to describe precisely, but they're very intuitive to grasp.
+      Try clicking around on the board below!
+    </p>
+
+    <div id="uttt" class="uttt"></div>
+    <script src="uttt.js"></script>
+
+    <p>
+      CodinGame hosts almost a hundred bot programming competitions, so why is UTTT special?
+      Well, the elegant ruleset makes it easy to pick up. Unlike in, say, chess, you don't have to worry
+      about implementing threefold repetition, the fifty-move rule, or castling rights correctly <i>and</i>
+      efficiently in every possible situation. In fact, my move generation logic only needs about 200 lines of code!
+    </p>
+
+    <p>
+      Additionally, the game is not <a href="https://en.wikipedia.org/wiki/Solved_game"> solved</a>. Opening
+      books, which many players dislike facing, don't really help either, as it is genuinely unclear what the
+      best move is as soon as ply 2.<sup><a href="#fn1" id="fnref1">1</a></sup> There is also no good, simple
+      heuristic evaluation function for a board position. You will often see top bots deciding not to claim
+      a mini-board when given the chance, or sacrificing one mini-board to get a better situation on another.
+      A classic minimax search that greedily tries to maximize some naive heuristic will play very poorly.
+      This makes the game a perfect candidate for
+      <a href="https://en.wikipedia.org/wiki/Monte_Carlo_tree_search">Monte Carlo Tree Search</a> (MCTS)<sup><a href="#fn2" id="fnref2">2</a></sup>
+      with random rollouts. With excellent performance engineering, it is possible to reach about top 50 on
+      the leaderboard with this simple architecture.
+    </p>
+
+
+
+    <ol class="footnotes">
+      <li id="fn1">
+        On ply 1, the first move from X, the only good move is to play the center square of the center board.
+        <a class="footnote-back" href="#fnref1" aria-label="Back to reference">↩</a>
+      </li>
+      <li id="fn2">
+        The search algorithm notably used by DeepMind's AlphaZero.
+        <a class="footnote-back" href="#fnref2" aria-label="Back to reference">↩</a>
+      </li>
+    </ol>
+  </body>
+</html>
