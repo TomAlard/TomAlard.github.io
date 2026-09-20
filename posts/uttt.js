@@ -149,6 +149,166 @@
     return { play: play, reset: reset, state: snapshot };
   }
 
+  const LINE = "#2c2c2e";
+  const LINE_FADED = "rgba(44, 44, 46, 0.38)";
+  const X_COLOR = "#2563eb";
+  const O_COLOR = "#dc2626";
+  const DRAW_COLOR = "#6b7280";
+
+  function relRect(el, origin) {
+    const r = el.getBoundingClientRect();
+    return {
+      x: r.left - origin.left,
+      y: r.top - origin.top,
+      w: r.width,
+      h: r.height
+    };
+  }
+
+  function withAlpha(color, alpha) {
+    if (color.charAt(0) !== "#" || color.length !== 7) return color;
+    const r = parseInt(color.slice(1, 3), 16);
+    const g = parseInt(color.slice(3, 5), 16);
+    const b = parseInt(color.slice(5, 7), 16);
+    return "rgba(" + r + ", " + g + ", " + b + ", " + alpha + ")";
+  }
+
+  function strokeOpts(extra) {
+    return Object.assign({
+      disableMultiStroke: true,
+      roughness: 1.35,
+      bowing: 0.9,
+      maxRandomnessOffset: 2.2
+    }, extra);
+  }
+
+  function drawX(rc, box, stroke, strokeWidth, seed) {
+    const pad = Math.min(box.w, box.h) * 0.22;
+    rc.line(box.x + pad, box.y + pad, box.x + box.w - pad, box.y + box.h - pad, strokeOpts({
+      stroke: stroke,
+      strokeWidth: strokeWidth,
+      seed: seed
+    }));
+    rc.line(box.x + box.w - pad, box.y + pad, box.x + pad, box.y + box.h - pad, strokeOpts({
+      stroke: stroke,
+      strokeWidth: strokeWidth,
+      seed: seed + 17
+    }));
+  }
+
+  function drawO(rc, box, stroke, strokeWidth, seed) {
+    const size = Math.min(box.w, box.h) * 0.58;
+    rc.circle(box.x + box.w / 2, box.y + box.h / 2, size, strokeOpts({
+      stroke: stroke,
+      strokeWidth: strokeWidth,
+      seed: seed
+    }));
+  }
+
+  function drawSketch(canvas, boardEl, minis, buttons, state) {
+    if (!window.rough) return;
+    const origin = boardEl.getBoundingClientRect();
+    if (origin.width < 8 || origin.height < 8) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(origin.width * dpr);
+    canvas.height = Math.round(origin.height * dpr);
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, origin.width, origin.height);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    const rc = window.rough.canvas(canvas);
+    const allowed = {};
+    for (let i = 0; i < state.playable.length; i++) {
+      allowed[state.playable[i]] = true;
+    }
+
+    const miniBoxes = [];
+    for (let m = 0; m < 9; m++) {
+      miniBoxes[m] = relRect(minis[m], origin);
+    }
+
+    const macro = strokeOpts({
+      stroke: LINE,
+      strokeWidth: 2.6,
+      roughness: 1.15,
+      bowing: 0.85,
+      maxRandomnessOffset: 3.5
+    });
+    for (let col = 0; col < 2; col++) {
+      const left = miniBoxes[col];
+      const right = miniBoxes[col + 1];
+      const bottom = miniBoxes[col + 6];
+      const x = (left.x + left.w + right.x) / 2;
+      rc.line(x, left.y, x, bottom.y + bottom.h, Object.assign({ seed: 11 + col }, macro));
+    }
+    for (let row = 0; row < 2; row++) {
+      const top = miniBoxes[row * 3];
+      const bottom = miniBoxes[row * 3 + 3];
+      const right = miniBoxes[row * 3 + 2];
+      const y = (top.y + top.h + bottom.y) / 2;
+      rc.line(top.x, y, right.x + right.w, y, Object.assign({ seed: 21 + row }, macro));
+    }
+
+    for (let m = 0; m < 9; m++) {
+      const faded = !state.result && !allowed[m];
+      const stroke = faded ? LINE_FADED : LINE;
+      const cells = [];
+      for (let c = 0; c < 9; c++) {
+        cells[c] = relRect(buttons[m][c], origin);
+      }
+
+      const inner = strokeOpts({
+        stroke: stroke,
+        strokeWidth: 1.25,
+        roughness: 1.0,
+        bowing: 0.6,
+        maxRandomnessOffset: 1.65
+      });
+      for (let col = 0; col < 2; col++) {
+        const x = (cells[col].x + cells[col].w + cells[col + 1].x) / 2;
+        rc.line(x, cells[col].y, x, cells[col + 6].y + cells[col + 6].h, Object.assign({
+          seed: 100 + m * 10 + col
+        }, inner));
+      }
+      for (let row = 0; row < 2; row++) {
+        const y = (cells[row * 3].y + cells[row * 3].h + cells[row * 3 + 3].y) / 2;
+        rc.line(cells[row * 3].x, y, cells[row * 3 + 2].x + cells[row * 3 + 2].w, y, Object.assign({
+          seed: 200 + m * 10 + row
+        }, inner));
+      }
+
+      for (let c = 0; c < 9; c++) {
+        const value = state.cells[m][c];
+        if (!value || state.mini[m]) continue;
+        const color = value === 1 ? X_COLOR : O_COLOR;
+        const markStroke = faded ? withAlpha(color, 0.42) : color;
+        if (value === 1) {
+          drawX(rc, cells[c], markStroke, 1.7, 300 + m * 9 + c);
+        } else {
+          drawO(rc, cells[c], markStroke, 1.7, 500 + m * 9 + c);
+        }
+      }
+
+      if (state.mini[m] === 1) {
+        drawX(rc, miniBoxes[m], faded ? withAlpha(X_COLOR, 0.55) : X_COLOR, 3.4, 600 + m);
+      } else if (state.mini[m] === 2) {
+        drawO(rc, miniBoxes[m], faded ? withAlpha(O_COLOR, 0.55) : O_COLOR, 3.4, 700 + m);
+      } else if (state.mini[m] === 3) {
+        const box = miniBoxes[m];
+        const padX = box.w * 0.28;
+        const y = box.y + box.h / 2;
+        rc.line(box.x + padX, y, box.x + box.w - padX, y, strokeOpts({
+          stroke: faded ? withAlpha(DRAW_COLOR, 0.55) : DRAW_COLOR,
+          strokeWidth: 3.2,
+          seed: 800 + m
+        }));
+      }
+    }
+  }
+
   function mark(player) {
     return player === 1 ? "X" : "O";
   }
@@ -171,10 +331,15 @@
         '<p class="uttt-status" aria-live="polite"></p>' +
         '<button type="button" class="uttt-reset">Reset</button>' +
       "</div>" +
-      '<div class="uttt-board" role="grid" aria-label="Ultimate Tic-Tac-Toe"></div>'
+      '<div class="uttt-board" role="grid" aria-label="Ultimate Tic-Tac-Toe">' +
+        '<div class="uttt-minis"></div>' +
+        '<canvas class="uttt-sketch" aria-hidden="true"></canvas>' +
+      "</div>";
 
     const statusEl = root.querySelector(".uttt-status");
     const boardEl = root.querySelector(".uttt-board");
+    const minisEl = root.querySelector(".uttt-minis");
+    const canvas = root.querySelector(".uttt-sketch");
     const resetEl = root.querySelector(".uttt-reset");
     const minis = [];
     const buttons = [];
@@ -198,7 +363,7 @@
       overlay.className = "uttt-overlay";
       overlay.setAttribute("aria-hidden", "true");
       miniEl.appendChild(overlay);
-      boardEl.appendChild(miniEl);
+      minisEl.appendChild(miniEl);
       minis[m] = miniEl;
     }
 
@@ -214,9 +379,6 @@
         minis[m].classList.toggle("won-x", state.mini[m] === 1);
         minis[m].classList.toggle("won-o", state.mini[m] === 2);
         minis[m].classList.toggle("drawn", state.mini[m] === 3);
-        const overlay = minis[m].querySelector(".uttt-overlay");
-        overlay.textContent =
-          state.mini[m] === 1 ? "X" : state.mini[m] === 2 ? "O" : state.mini[m] === 3 ? "–" : "";
 
         for (let c = 0; c < 9; c++) {
           const value = state.cells[m][c];
@@ -229,12 +391,19 @@
       }
 
       statusEl.textContent = statusText(state);
+      drawSketch(canvas, boardEl, minis, buttons, state);
     }
 
     resetEl.addEventListener("click", function () {
       game.reset();
       render();
     });
+
+    if (window.ResizeObserver) {
+      new window.ResizeObserver(function () {
+        drawSketch(canvas, boardEl, minis, buttons, game.state());
+      }).observe(boardEl);
+    }
 
     render();
     return game;

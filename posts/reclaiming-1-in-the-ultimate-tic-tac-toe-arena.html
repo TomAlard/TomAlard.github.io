@@ -90,16 +90,30 @@
       }
 
       .uttt-board {
-        --uttt-line: #2c2c2c;
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        grid-template-rows: repeat(3, minmax(0, 1fr));
-        gap: 3px;
+        --uttt-line: #2c2c2e;
+        position: relative;
         max-width: 28rem;
         margin: 0 auto;
         aspect-ratio: 1;
-        background: var(--uttt-line);
         user-select: none;
+      }
+
+      .uttt-minis {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-rows: repeat(3, minmax(0, 1fr));
+        width: 100%;
+        height: 100%;
+      }
+
+      .uttt-sketch {
+        position: absolute;
+        inset: 0;
+        display: block;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 1;
       }
 
       .uttt-mini {
@@ -110,50 +124,25 @@
         box-sizing: border-box;
         min-width: 0;
         min-height: 0;
-        gap: 0;
-        padding: 0.45rem;
-        background: var(--background-body);
+        padding: 11%;
       }
 
       .uttt-cell {
         all: unset;
         box-sizing: border-box;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        display: block;
         width: 100%;
         height: 100%;
         min-width: 0;
         min-height: 0;
-        overflow: hidden;
         background: transparent;
-        font-family: inherit;
-        font-size: clamp(0.95rem, 3.6vw, 1.35rem);
-        font-weight: 800;
-        line-height: 1;
         color: transparent;
         cursor: pointer;
         touch-action: manipulation;
-        border-right: 1px solid var(--uttt-line);
-        border-bottom: 1px solid var(--uttt-line);
-        transition: opacity 0.15s ease, border-color 0.15s ease;
-      }
-
-      .uttt-cell:nth-child(3n) {
-        border-right: none;
-      }
-
-      .uttt-cell:nth-child(n + 7) {
-        border-bottom: none;
-      }
-
-      .uttt-mini:not(.active) .uttt-cell {
-        opacity: 0.38;
-        border-color: #9a9a9a;
       }
 
       .uttt-mini.active .uttt-cell:not(:disabled):hover {
-        background: #e8e8e8;
+        background: rgba(0, 0, 0, 0.06);
       }
 
       .uttt-cell:disabled {
@@ -161,24 +150,16 @@
         opacity: 1;
       }
 
-      .uttt-cell.x {
-        color: #2563eb;
-      }
-
-      .uttt-cell.o {
-        color: #dc2626;
+      .uttt-cell:active,
+      .uttt-cell:focus {
+        transform: none;
+        box-shadow: none;
       }
 
       .uttt-overlay {
         position: absolute;
         inset: 0;
-        z-index: 1;
         display: none;
-        align-items: center;
-        justify-content: center;
-        font-size: clamp(2.2rem, 10vw, 3.4rem);
-        font-weight: 800;
-        line-height: 1;
         pointer-events: none;
         background: rgba(245, 245, 245, 0.42);
       }
@@ -186,19 +167,7 @@
       .uttt-mini.won-x .uttt-overlay,
       .uttt-mini.won-o .uttt-overlay,
       .uttt-mini.drawn .uttt-overlay {
-        display: flex;
-      }
-
-      .uttt-mini.won-x .uttt-overlay {
-        color: #2563eb;
-      }
-
-      .uttt-mini.won-o .uttt-overlay {
-        color: #dc2626;
-      }
-
-      .uttt-mini.drawn .uttt-overlay {
-        color: #6b7280;
+        display: block;
       }
 
       .footnotes {
@@ -307,6 +276,7 @@
     </p>
 
     <div id="uttt" class="uttt"></div>
+    <script src="https://cdn.jsdelivr.net/npm/roughjs@4.6.6/bundled/rough.js"></script>
     <script src="uttt.js"></script>
 
     <p>
@@ -329,16 +299,51 @@
       the leaderboard with this simple architecture.
     </p>
 
+    <p>
+      However, that's still far from the #1 spot. The current
+      <a href="https://en.wikipedia.org/wiki/TrueSkill">TrueSkill</a> gap on the leaderboard between the #1
+      and #50 bot is about 9, which implies an expected winrate of over 90% for the #1 bot. Even when the #50
+      bot gets to play with <b>X</b>, which has a massive advantage over <b>O</b> in UTTT<sup><a href="#fn3" id="fnref3">3</a></sup>,
+      it will still lose almost every single time.
+    </p>
 
+    <p>
+      So how do we break past the random rollout MCTS wall? Through neural network evaluation functions.
+    </p>
+
+    <h2>NNUE</h2>
+
+    <p>
+      Efficiently updatable neural networks, or
+      <a href="https://en.wikipedia.org/wiki/Efficiently_updatable_neural_network">NNUE</a>
+      (sometimes stylized as ƎUИИ) took the chess programming world by storm in early 2020.
+      NNUEs were found to be vastly superior at evaluating positions than the handcrafted evaluation
+      functions used in Stockfish and other engines. Today, most strong chess engines use an
+      NNUE.<sup><a href="#fn4" id="fnref4">4</a></sup>
+    </p>
+
+    <p>
+      So how does it work? Let's start with a simple 199 → 256 → 1 NNUE:
+    </p>
 
     <ol class="footnotes">
       <li id="fn1">
-        On ply 1, the first move from X, the only good move is to play the center square of the center board.
+        On ply 1, the first move from <b>X</b>, the only good move is to play the center square of the center board.
         <a class="footnote-back" href="#fnref1" aria-label="Back to reference">↩</a>
       </li>
       <li id="fn2">
-        The search algorithm notably used by DeepMind's AlphaZero.
+        The search algorithm notably used by DeepMind's <a href="https://en.wikipedia.org/wiki/AlphaZero">AlphaZero</a>.
         <a class="footnote-back" href="#fnref2" aria-label="Back to reference">↩</a>
+      </li>
+      <li id="fn3">
+        My self-play data shows that <b>X</b> wins about 73% of games, <b>O</b> wins 3.5% of games, and 23.5% of games are drawn.
+        <a class="footnote-back" href="#fnref3" aria-label="Back to reference">↩</a>
+      </li>
+      <li id="fn4">
+        <a href="https://lczero.org/">Leela Chess Zero</a> is an example of a strong chess engine that does not
+        use an NNUE, instead using an architecture similar to AlphaZero. However, Leela needs a GPU to be effective,
+        which we do not have at our disposal on CodinGame.
+        <a class="footnote-back" href="#fnref4" aria-label="Back to reference">↩</a>
       </li>
     </ol>
   </body>
