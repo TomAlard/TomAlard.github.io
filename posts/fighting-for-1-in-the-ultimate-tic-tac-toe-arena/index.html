@@ -367,18 +367,53 @@
       .code-block .token.macro {
         color: #9333ea;
       }
+
+      h2 {
+        scroll-margin-top: 1.5rem;
+      }
+
+      h2 .heading-anchor {
+        display: inline-flex;
+        align-items: center;
+        margin-left: 0.45em;
+        opacity: 0;
+        color: #6b7280;
+        text-decoration: none;
+        vertical-align: middle;
+        transition: opacity 0.15s ease;
+      }
+
+      h2 .heading-anchor svg {
+        width: 0.9em;
+        height: 0.9em;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      h2:hover .heading-anchor,
+      h2:focus-within .heading-anchor {
+        opacity: 1;
+      }
+
+      h2 .heading-anchor:hover,
+      h2 .heading-anchor:focus {
+        color: #2563eb;
+      }
     </style>
   </head>
   <body>
     <header class="post-header">
-      <a class="post-author" href="../">Tom Alard</a>
+      <a class="post-author" href="../../">Tom Alard</a>
       <time datetime="2026-09-20">September 20, 2026</time>
     </header>
 
     <h1>Fighting for #1 in the Ultimate <span class="nowrap">Tic-Tac-Toe</span> Arena</h1>
 
     <figure>
-      <img src="uttt-leaderboard.png" alt="Ultimate Tic-Tac-Toe Arena leaderboard">
+      <img src="../uttt-leaderboard.png" alt="Ultimate Tic-Tac-Toe Arena leaderboard">
       <figcaption>
         <a href="https://www.codingame.com/multiplayer/bot-programming/tic-tac-toe/leaderboard"><i>The live UTTT leaderboard</i></a>
       </figcaption>
@@ -394,11 +429,11 @@
     </p>
 
     <figure>
-      <img src="uttt-discord.png" alt="Top players discussing the UTTT arena">
+      <img src="../uttt-discord.png" alt="Top players discussing the UTTT arena">
       <figcaption>Top CodinGame players discussing the UTTT arena</figcaption>
     </figure>
 
-    <h2>CodinGame</h2>
+    <h2 id="codingame">CodinGame</h2>
 
     <p>
       The concept of a bot programming competition on CodinGame is simple: Build a program that plays the given
@@ -435,7 +470,7 @@
       with a decent gaming PC can realistically compete at the highest level.
     </p>
 
-    <h2>UTTT</h2>
+    <h2 id="uttt">UTTT</h2>
 
     <p>
       Ultimate <span class="nowrap">Tic-Tac-Toe</span> is played on a 3×3 grid of mini-boards. The rules are simple:
@@ -463,7 +498,7 @@
 
     <div id="uttt" class="uttt"></div>
     <script src="https://cdn.jsdelivr.net/npm/roughjs@4.6.6/bundled/rough.js"></script>
-    <script src="uttt.js"></script>
+    <script src="../uttt.js"></script>
 
     <p>
       CodinGame hosts almost a hundred bot programming competitions, so why is UTTT special?
@@ -497,7 +532,7 @@
       So how do we break past the random rollout MCTS wall? Through neural network evaluation functions.
     </p>
 
-    <h2>NNUE</h2>
+    <h2 id="nnue">NNUE</h2>
 
     <p>
       Efficiently updatable neural networks, or
@@ -734,7 +769,7 @@
       215k parameters ever fit?
     </p>
 
-    <h2>The "Python" submission</h2>
+    <h2 id="python-submission">The "Python" submission</h2>
 
     <p>
       Behold, my Python 3 CodinGame submission in all its glory:
@@ -779,7 +814,7 @@ os.system("./CG")</code></pre>
       <small class="tiny">Please don't ban me.</small>
     </p>
 
-    <h2>Search</h2>
+    <h2 id="search">Search</h2>
 
     <p>
       A good evaluation function is not enough, some sort of search algorithm is required to make a good bot.
@@ -822,7 +857,7 @@ os.system("./CG")</code></pre>
       my NNUE or my code. I hope I'll have a better solution or explanation soon.
     </p>
 
-    <h2>C engine</h2>
+    <h2 id="c-engine">C engine</h2>
 
     <p>
       All the theory described above is good and well, but it still needs to be implemented with
@@ -875,7 +910,7 @@ os.system("./CG")</code></pre>
     return hard_sigmoid(partialEval + outputBiases[bucket]);
 }</code></pre>
 
-    <h2>Future Work</h2>
+    <h2 id="future-work">Future Work</h2>
 
     <p>
       So, was all of this effort enough to decisively take the #1 spot on the leaderboard?
@@ -932,5 +967,17 @@ os.system("./CG")</code></pre>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-clike.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-c.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script>
+      const headingLinkIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+
+      document.querySelectorAll('h2[id]').forEach((heading) => {
+        const link = document.createElement('a');
+        link.className = 'heading-anchor';
+        link.href = `#${heading.id}`;
+        link.setAttribute('aria-label', 'Link to this section');
+        link.innerHTML = headingLinkIcon;
+        heading.appendChild(link);
+      });
+    </script>
   </body>
 </html>
