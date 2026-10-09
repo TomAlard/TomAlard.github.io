@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ClickHouse outcompresses Parquet: Surprises from our migration</title>
+    <meta name="description" content="Pushing Parquet and ClickHouse to their limits to minimize bytes/row on trillions of GPS pings">
+    <meta property="og:title" content="ClickHouse outcompresses Parquet: Surprises from our migration">
+    <meta property="og:description" content="Pushing Parquet and ClickHouse to their limits to minimize bytes/row on trillions of GPS pings">
+    <meta property="og:image" content="https://tomalard.github.io/posts/clickhouse-outcompresses-parquet-surprises-from-our-migration/og-image.png">
+    <meta property="og:url" content="https://tomalard.github.io/posts/clickhouse-outcompresses-parquet-surprises-from-our-migration/">
+    <meta property="og:type" content="article">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="ClickHouse outcompresses Parquet: Surprises from our migration">
+    <meta name="twitter:description" content="Pushing Parquet and ClickHouse to their limits to minimize bytes/row on trillions of GPS pings">
+    <meta name="twitter:image" content="https://tomalard.github.io/posts/clickhouse-outcompresses-parquet-surprises-from-our-migration/og-image.png">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/light.css">
+    <link rel="stylesheet" href="../../assets/post.css">
+  </head>
+  <body>
+    <header class="post-header">
+      <a class="post-author" href="../../">Tom Alard</a>
+      <time datetime="2026-10-09">October 9, 2026</time>
+    </header>
+
+    <h1>ClickHouse outcompresses Parquet: Surprises from our migration</h1>
+
+    <p class="disclaimer">
+      I'm not affiliated with ClickHouse, Inc. We use the free, open-source version.
+    </p>
+
+    <p>
+      I have been leading an initiative to migrate our core IoT datasets, consisting of trillions of rows,
+      to a self-hosted ClickHouse cluster on Hetzner bare metal.
+      While ClickHouse is famously fast, we learned that it is also excellent at compressing
+      data, which is highly relevant at our scale. This post explores the tricks we used to
+      noticeably outperform our previous optimized Parquet setup on this front.
+    </p>
+
+    <h2 id="schema">Schema</h2>
+
+    <p>
+      The schema we'll be working with represents vehicle GPS pings. A vehicle sends a <code>latitude</code>, <code>longitude</code> ping
+      at <code>time_sent</code>, while <code>time_received</code> is the time at which it reaches our servers.
+      Pings from the same vehicle's session send the same (anonymized) <code>session_id</code>.
+      A row also contains some additional data, like <code>speed</code> and <code>heading</code>.
+    </p>
+
+    <ul>
+      <li><code>session_id</code>: string</li>
+      <li><code>latitude</code>: double</li>
+      <li><code>longitude</code>: double</li>
+      <li><code>time_sent</code>: timestamp, second precision</li>
+      <li><code>time_received</code>: timestamp, second precision</li>
+      <li><code>speed</code>: uint8</li>
+      <li><code>heading</code>: uint16</li>
+      <li><code>hdop</code>: uint16</li>
+    </ul>
+
+    <p>
+      We ingest over a trillion of such rows per year, or over 50k rows per second.
+      Therefore, it's definitely worth it to try to optimize the storage a bit!
+    </p>
+
+    <h2 id="parquet">Parquet</h2>
+
+    <p>
+      Parquet is a popular columnar file format. Columnar means that data is stored column-by-column,
+      instead of row-by-row. Although this makes the retrieval of a single row slower and more difficult,
+      it comes with clear advantages. The most relevant one for us is that, when paired with a good sort order,
+      it is significantly easier to compress subsequent values of a column than
+      trying to compress mixed data across an entire row.
+    </p>
+
+    <p>
+      Since we're not that interested in retrieving single rows, this makes Parquet a solid choice for us.
+      It is also what we were using before we started migrating to ClickHouse.
+      Here's the original Parquet schema:
+    </p>
+
+    <pre class="code-block"><code class="language-clike">int64   s2_cell_id        INTEGER(64, false);                  -- PLAIN
+binary  session_id        STRING;                              -- PLAIN
+int32   latitude_e6       INTEGER(32, true);                   -- DELTA_BINARY_PACKED
+int32   longitude_e6      INTEGER(32, true);                   -- DELTA_BINARY_PACKED
+int64   time_sent         TIMESTAMP(MILLIS, true);             -- DELTA_BINARY_PACKED
+int64   time_received     TIMESTAMP(MILLIS, true);             -- DELTA_BINARY_PACKED
+int32   speed             INTEGER(8, false);                   -- PLAIN
+int32   heading           INTEGER(16, false);                  -- PLAIN
+int32   hdop              INTEGER(16, false);                  -- PLAIN</code></pre>
+
+    <p>
+      The first type shows the physical type, the second type shows the logical type, and the comment
+      shows the encoding used. We used a couple tricks to get the compressed size as low as possible,
+      so let's take a look.
+    </p>
+
+    <h2 id="sort-order">Sort order</h2>
+
+    <p>
+      When using a columnar format, the sort order is very important, as it determines the order in
+      which values are compressed. If subsequent values follow a predictable pattern, they are much
+      easier to compress.
+    </p>
+
+    <p>
+      If we were purely interested in compressed size, a simple and good sort order would be
+      <code>(session_id, time_sent)</code>. This groups pings from the same vehicle together, maximizing
+      the compression ratio. It also makes it easy to retrieve an entire session. However,
+      if you want to retrieve all pings within a certain area (a geospatial query), you have to do a full scan
+      over the data, as the relevant pings will be dispersed over the entire file.
+      At our scale, that would mean these types of queries would be too slow to execute for most use cases.
+      This was not acceptable for us. Therefore, we introduced a new column: <code>s2_cell_id</code>.
+    </p>
+
+    <p>
+      <a href="https://s2geometry.io/devguide/s2cell_hierarchy.html">S2 cells</a> divide the earth's surface into
+      rectangular<sup><a href="#fn1" id="fnref1">1</a></sup> cells, such that cells which are close to each other in space
+      tend to have numerically close IDs. Essentially, we're trying to map a 2D space (the earth's surface)
+      onto a 1D line (numeric IDs), while preserving the concept of proximity as best as possible.
+      This is done by using a <a href="https://en.wikipedia.org/wiki/Hilbert_curve">Hilbert space-filling curve</a>.
+      S2 cells are hierarchical: Lower levels have larger cells, higher levels have smaller cells.
+    </p>
+
+    <p>
+      If we calculate the S2 cell at a given level for every GPS point (this is computationally cheap),
+      and then change our sort order to <code>(s2_cell_id, session_id, time_sent)</code>, we can enable fast geospatial
+      queries over the data, while maintaining good compression. Lower S2 cell levels (larger cells) produce
+      longer contiguous runs of points for a given <code>session_id</code>, improving compression, but making small-area
+      geospatial lookups read more superfluous data. On the other hand,
+      higher S2 cell levels (smaller cells) make it possible to skip data more granularly, making small
+      geospatial lookups faster, but shorten average runs from the same <code>session_id</code>, worsening compression.
+    </p>
+
+    <p>
+      In our custom Parquet writer, we first clustered data into row groups of
+      ~1M rows based on their level 11 S2 cells, and then sorted on <code>(session_id, time_sent)</code>
+      within each individual row group. This makes it so that each row group "owns" a piece of the surface,
+      with areas where data density is higher resulting in smaller row groups than areas with lower data density.
+      Geospatial queries now only have to retrieve row groups whose areas overlap with the queried area.
+      Here's an example of an hour of data from a provider that mostly sends data from the Netherlands:
+    </p>
+
+    <figure>
+      <iframe
+        src="row-group-territories.html"
+        title="Parquet row group territories around Rotterdam"
+        loading="lazy"
+        style="display: block; width: 100%; height: 34rem; border: 1.5px solid #2c2c2e; border-radius: 2px;"
+      ></iframe>
+    </figure>
+
+    <p>
+      In ClickHouse, we went for a simpler solution. We settled on level 8 S2 cells,
+      and just sorted on <code>(s2_cell_id, session_id, time_sent)</code>.
+      To keep comparisons fair, we'll use this same sort scheme for Parquet in the results
+      below as well, instead of our custom solution.
+    </p>
+
+    <h2 id="lat-lon-1e6">Latitude and longitude as integers</h2>
+
+    <p>
+      Double-precision can store lat/lon pairs to nanometer precision, but of course,
+      the precision of the incoming data is many orders of magnitude worse,
+      and we don't care about this level of precision anyway.
+      Storing lat/lon as doubles leads to noisy bits in the mantissa that are
+      difficult to compress. Instead, we can multiply latitude and longitude
+      by <code>1e6</code>, round it, and store the result in a 32-bit integer.
+      The maximum longitude is ±180°, so multiplying that by 1e6 gives 180 million,
+      which comfortably fits inside an int32 (which has limits of roughly ±2.1 billion).
+      As the maximum latitude is ±90°, both lat and lon are always guaranteed to fit in an int32.
+    </p>
+
+    <p>
+      With this representation, we halve the uncompressed size of our data,
+      and we drop down to centimeter precision (max error of ~6 cm for one lat/lon point).
+      This is still more than good enough for what we need to do.
+      By lowering the precision, we get rid of a lot of noise, and the resulting data
+      compresses much better.
+    </p>
+
+    <h2 id="parquet-encodings">Parquet encodings</h2>
+
+    <p>
+      It is well known that Parquet lets you compress column data using compression codecs
+      like Snappy or ZSTD. You might also know that you can use dictionary encoding (<code>RLE_DICTIONARY</code>)
+      to achieve high compression ratios on low-cardinality columns. What is less known, and less utilized,
+      however, is that the Parquet standard supports more
+      <a href="https://parquet.apache.org/docs/file-format/data-pages/encodings">encodings</a>
+      than just <code>PLAIN</code> or <code>RLE_DICTIONARY</code>. Support for these other encodings
+      is mixed in practice. Although most readers can read columns written with these encodings,
+      many are unable to write them.
+    </p>
+
+    <p>
+      However, <code>DELTA_BINARY_PACKED</code> turned out to be quite beneficial for some of our
+      columns, so we found a writer that did support it. The encoding works by calculating the
+      delta between subsequent values in the column, and then applying a binary packing strategy that
+      is most effective when deltas are small. The result can then be fed into a general purpose
+      compression codec. We use ZSTD, as it provides a great balance between compression ratio
+      and (de)compression speed.
+    </p>
+
+    <p>
+      After applying all the tricks above, we end up at around 8.2 bytes per row compressed.
+      Note that a naive implementation where we limit ourselves to Snappy compression and the
+      <code>PLAIN</code> and <code>RLE_DICTIONARY</code> encodings (the default Spark settings)
+      gets around 28.9 bytes per row. And if you mess up the sort order and sort on
+      <code>time_received</code> instead, you end up at around 59.4 bytes per row.
+      Therefore, I think it's fair to say that we've pushed Parquet reasonably hard.
+    </p>
+
+    <h2 id="pushing-parquet-to-the-limit">Pushing Parquet to the limit</h2>
+
+    <p>
+      But if we're willing to sacrifice compatibility and quality of life,
+      we can push Parquet even further. First off, we've been storing <code>time_sent</code>
+      and <code>time_received</code> in millisecond precision timestamps, despite them only
+      having second precision. Why? Because Parquet simply does not support second precision timestamps.
+      So let's make two changes: We'll manually encode and store <code>time_sent</code> as an int32,
+      and we'll drop <code>time_received</code>, instead storing <code>received_latency</code>,
+      where <code>time_received = time_sent + received_latency</code>. It'll be the responsibility
+      of the reader to reconstruct this column.
+    </p>
+
+    <p>
+      Secondly, the Parquet standard was recently updated to allow using the <code>BYTE_STREAM_SPLIT</code>
+      encoding for integer types, while it was only supported for floating point types before.
+      This encoding works by rearranging the bytes of the values as shown below:
+    </p>
+
+    <figure>
+      <img
+        src="byte_stream_split.svg"
+        alt="BYTE_STREAM_SPLIT: three multi-byte values split into separate byte streams for compression"
+      >
+    </figure>
+
+    <p>
+      By itself, it does not reduce the data size, but when paired with ZSTD, the results significantly
+      outperform <code>DELTA_BINARY_PACKED</code> on our biggest columns.
+      Why does <code>DELTA_BINARY_PACKED</code> perform poorly by comparison?
+      I'm not 100% sure, but I think the bit packing can straddle different values over byte boundaries,
+      messing with ZSTD, which looks for repeating patterns at the byte level.
+    </p>
+
+    <p>
+      Unfortunately, reading integer columns encoded with <code>BYTE_STREAM_SPLIT</code> is a new and
+      relatively <a href="https://parquet.apache.org/docs/file-format/implementationstatus/#encodings">unsupported</a>
+      feature. Major readers like DuckDB and Polars will simply throw an error when encountering this.
+    </p>
+
+    <p>
+      With these changes, Parquet hits about 6.1 bytes per row. But realistically, the limitations
+      with this approach are probably a dealbreaker in most cases. Can ClickHouse still do better
+      than this? Yes!
+    </p>
+
+    <h2 id="clickhouse">ClickHouse</h2>
+
+    <p>
+      ClickHouse is an OLAP database. <i>ClickHouse, Inc.</i> sells a managed version of ClickHouse
+      called ClickHouse Cloud, but we chose to self-host the open source version of ClickHouse
+      on Hetzner bare-metal instead. ClickHouse's main table engine, the
+      <a href="https://clickhouse.com/docs/reference/engines/table-engines/mergetree-family/mergetree">MergeTree</a>,
+      also stores data in a columnar fashion, just like Parquet. Each node in the cluster stores its data
+      directly on its own NVMe SSDs. This makes queries ridiculously fast. However, SSDs are quite a bit
+      more <a href="https://pcpartpicker.com/trends/price/internal-hard-drive/">expensive</a>
+      than hard drives (like S3 uses), especially with recent AI-related price hikes.
+      That makes optimizing the compressed size per row even more relevant than before.
+    </p>
+
+    <p>
+      Here's the original Parquet schema, ported to ClickHouse:
+    </p>
+
+
+    <pre class="code-block"><code class="language-sql">CREATE TABLE gps
+(
+    s2_cell_id       UInt64                              CODEC(ZSTD(3)),
+    session_id       String                              CODEC(ZSTD(3)),
+    latitude_e6      Int32                               CODEC(DoubleDelta),
+    longitude_e6     Int32                               CODEC(DoubleDelta),
+    time_sent        DateTime('UTC')                     CODEC(DoubleDelta, ZSTD(3)),
+    received_latency Int32                               CODEC(T64, ZSTD(3)),
+    time_received    DateTime('UTC')                     ALIAS time_sent + received_latency,
+    speed            UInt8                               CODEC(Delta, ZSTD(3)),
+    heading          UInt16                              CODEC(ZSTD(3)),
+    hdop             UInt16                              CODEC(T64, ZSTD(3))
+)
+ENGINE = MergeTree
+ORDER BY (s2_cell_id, session_id, time_sent)</code></pre>
+
+    <p>
+      Incredibly, this ClickHouse port reaches about 5.9 compressed bytes per row,
+      despite the fact that we're using a much lower ZSTD level
+      (3 for ClickHouse vs 11 for Parquet)<sup><a href="#fn2" id="fnref2">2</a></sup>. How is this possible?
+      Let's look at a comparison of the most important columns:
+    </p>
+
+
+    <table>
+      <thead>
+        <tr>
+          <th>Column</th>
+          <th>Parquet (tuned)</th>
+          <th>Parquet (limit)</th>
+          <th>ClickHouse</th>
+          <th>ClickHouse - Parquet (tuned)</th>
+          <th>ClickHouse - Parquet (limit)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>latitude_e6</code></td>
+          <td>1.931 DBP</td>
+          <td>1.588 BSS</td>
+          <td>1.477 DD</td>
+          <td>−0.454</td>
+          <td>−0.111</td>
+        </tr>
+        <tr>
+          <td><code>longitude_e6</code></td>
+          <td>1.989 DBP</td>
+          <td>1.713 BSS</td>
+          <td>1.604 DD</td>
+          <td>−0.385</td>
+          <td>−0.109</td>
+        </tr>
+        <tr>
+          <td><code>time_sent</code></td>
+          <td>0.976 DBP</td>
+          <td>0.483 BSS</td>
+          <td>0.404 DD</td>
+          <td>−0.572</td>
+          <td>−0.079</td>
+        </tr>
+        <tr>
+          <td><code>time_received</code></td>
+          <td>0.949 DBP</td>
+          <td>0.141 BSS (lag)</td>
+          <td>0.223 T64 (lag)</td>
+          <td>−0.726</td>
+          <td>+0.082</td>
+        </tr>
+        <tr>
+          <td><code>speed</code></td>
+          <td>0.734</td>
+          <td>0.712</td>
+          <td>0.617 Delta</td>
+          <td>−0.117</td>
+          <td>−0.095</td>
+        </tr>
+        <tr>
+          <td><strong>Total</strong></td>
+          <td><strong>8.189</strong></td>
+          <td><strong>6.131</strong></td>
+          <td><strong>5.879</strong></td>
+          <td><strong>−2.310 (−28%)</strong></td>
+          <td><strong>−0.252 (−4%)</strong></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p class="table-note">
+      DBP = <code>DELTA_BINARY_PACKED</code> / BSS = <code>BYTE_STREAM_SPLIT</code> / DD = <code>DoubleDelta</code>
+    </p>
+
+    <p>
+      It seems like <code>DoubleDelta</code> outperforms both Parquet encodings. How does it work?
+    </p>
+
+    <figure>
+      <img
+        src="double_delta.svg"
+        alt="GPS points along a highway, with Delta vectors between consecutive points and DoubleDelta corrections from the extended previous vector"
+      >
+    </figure>
+
+    <p>
+      Imagine a vehicle is driving along a straight road. <code>Delta</code> stores the difference between
+      two consecutive points (blue vectors). <code>DoubleDelta</code> stores <i>the difference between
+      two consecutive deltas</i> (red vectors). Another way to think about it is that <code>DoubleDelta</code>
+      "predicts" the next point will be at the same delta offset as the previous point's delta,
+      and then "corrects" itself with a second offset. In this case, it is clear that the red vectors are
+      smaller than the blue vectors, which can intuitively explain why it compresses better.
+    </p>
+
+    <p>
+      Of course, this encoding is most effective when vehicles are driving along a straight road for long
+      periods of time at a constant speed. Luckily, a majority of our data is from highways,
+      so that checks out! Unfortunately, Parquet has no encoding like
+      this<sup><a href="#fn3" id="fnref3">3</a></sup>, so this is a clear advantage for ClickHouse.
+    </p>
+
+    <h2 id="ease-of-use">Ease of use</h2>
+
+    <p>
+      The ClickHouse schema gets a better byte per row result than the best Parquet schema,
+      while maintaining good quality of life for data consumers. The <code>DateTime</code> type
+      is a second precision timestamp, physically stored as a 32-bit integer. This is the exact type we
+      needed from Parquet, but which it didn't have. So now readers can natively use whichever
+      timestamp functions they want.
+    </p>
+
+    <p>
+      Also, with <code>time_received</code> being stored as an <code>ALIAS</code>, readers can query
+      it directly, and ClickHouse will transparently compute the values at query time by adding the
+      <code>time_sent</code> and <code>received_latency</code> columns.
+    </p>
+
+    <h2 id="results">Results</h2>
+
+    <p>
+      When both Parquet and ClickHouse are tuned for maximum compression, ClickHouse comes out on top,
+      at least for this dataset:
+    </p>
+
+    <figure>
+      <img
+        src="bytes_per_row.svg"
+        alt="Compressed bytes per row: Parquet (naive) 28.94, Parquet (tuned) 8.19, Parquet (limit) 6.13, ClickHouse 5.88"
+      >
+    </figure>
+
+    <p>
+      Assuming a dataset size of 5 trillion rows (a bit more than 3 years of data), this would be the
+      cost of storing each of these on S3:
+    </p>
+
+    <figure>
+      <img
+        src="s3_cost.svg"
+        alt="Monthly S3 Standard cost for 5 trillion rows: Parquet (naive) $3,100, Parquet (tuned) $877, Parquet (limit) $657, ClickHouse $630"
+      >
+    </figure>
+
+    <p class="table-note">
+      S3 Standard in us-east-1 at $0.023 per GB-month
+    </p>
+
+    <p>
+      Assuming we wanted to store the entire dataset on NVMe SSDs, this is how much each
+      solution would cost per month. We assume each row is stored on three replicas, and
+      use current Hetzner prices for the node type we're currently using in our production ClickHouse cluster.
+    </p>
+
+    <figure>
+      <img
+        src="hetzner_cost.svg"
+        alt="Monthly Hetzner NVMe cost for 5 trillion rows: Parquet (naive) $25,354, Parquet (tuned) $7,174, Parquet (limit) $5,371, ClickHouse $5,151"
+      >
+    </figure>
+
+    <p class="table-note">
+      Hetzner EX63 at €802 (≈ $897) per month for 4 × 3.84 TB NVMe with 3× replication
+    </p>
+
+    <ol class="footnotes">
+      <li id="fn1">
+        These are technically spherical quadrilaterals. But in this case,
+        ignoring the scary math words and pretending they're just rectangles works remarkably well.
+        <a class="footnote-back" href="#fnref1" aria-label="Back to reference">↩</a>
+      </li>
+      <li id="fn2">
+        Using a lower ZSTD level in ClickHouse as opposed to Parquet is desirable,
+        as ClickHouse has write amplification due to MergeTree merges.
+        Using <code>ZSTD(11)</code> drops us down to about 5.75 bytes/row.
+        <a class="footnote-back" href="#fnref2" aria-label="Back to reference">↩</a>
+      </li>
+      <li id="fn3">
+        By the way, <code>DoubleDelta</code> isn't quite the same as just doing <code>Delta</code>
+        twice, as it also does a bit packing step at the end,
+        just like <code>DELTA_BINARY_PACKED</code>. And just like with that encoding, this might screw
+        with ZSTD. On the latitude and longitude columns, appending <code>ZSTD(3)</code>
+        after <code>DoubleDelta</code> doesn't improve compressed size at all.
+        On the <code>time_sent</code> column, <code>ZSTD(3)</code> can still noticeably improve
+        the result from <code>DoubleDelta</code>. But on ZSTD levels 15 and up,
+        <code>Delta, ZSTD</code> starts outperforming <code>DoubleDelta, ZSTD</code>, potentially
+        because the bit packing finally starts to hurt? I don't know, this is quite obscure stuff.
+        In any case, level 15 is too slow to reasonably use in production anyway.
+        <a class="footnote-back" href="#fnref3" aria-label="Back to reference">↩</a>
+      </li>
+    </ol>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-clike.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-sql.min.js"></script>
+    <script src="../../assets/post.js"></script>
+  </body>
+</html>

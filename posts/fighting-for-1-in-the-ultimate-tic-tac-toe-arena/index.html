@@ -15,67 +15,8 @@
     <meta name="twitter:description" content="Using UPX-packed C binaries in UTF-16, SIMD-accelerated NNUEs, and MCTS to climb the CodinGame leaderboard.">
     <meta name="twitter:image" content="https://tomalard.github.io/posts/uttt-leaderboard.png">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/light.css">
+    <link rel="stylesheet" href="../../assets/post.css">
     <style>
-      :root {
-        --background-body: #F5F5F5;
-      }
-
-      .post-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        gap: 1rem;
-        margin-bottom: 2.25rem;
-      }
-
-      .post-author {
-        margin: 0;
-        font-size: 1.618rem;
-        font-weight: 700;
-        text-decoration: none;
-        color: inherit;
-      }
-
-      .post-author:hover {
-        text-decoration: underline;
-      }
-
-      .post-header time {
-        font-size: 0.875rem;
-        font-weight: 400;
-        color: #6b7280;
-        background: none;
-        padding: 0;
-        border-radius: 0;
-      }
-
-      h1 {
-        font-size: 2.6rem;
-        font-weight: 800;
-        line-height: 1.1;
-        margin-bottom: 1rem;
-      }
-
-      .nowrap {
-        white-space: nowrap;
-      }
-
-      figure {
-        margin-top: 1.5rem;
-      }
-
-      figure img {
-        max-width: 100%;
-        height: auto;
-        margin: 0;
-      }
-
-      figcaption {
-        margin-top: 0.5rem;
-        font-size: 0.875rem;
-        text-align: center;
-      }
-
       .uttt {
         margin: 2.5rem 0;
       }
@@ -281,136 +222,6 @@
       .nnue-split {
         stroke: #2c2c2e;
         stroke-width: 1.5;
-      }
-
-      .footnotes {
-        margin-top: 3rem;
-        padding-top: 1rem;
-        border-top: 1px solid #d1d5db;
-        font-size: 0.875rem;
-        color: #4b5563;
-      }
-
-      .footnotes li {
-        margin-bottom: 0.5rem;
-      }
-
-      .footnote-back {
-        margin-left: 0.25rem;
-        text-decoration: none;
-      }
-
-      .tiny {
-        font-size: 0.65rem;
-      }
-
-      .code-block {
-        margin: 1.5rem 0;
-        padding: 1rem 1.25rem;
-        border: 1.5px solid #2c2c2e;
-        border-radius: 2px;
-        background: #fff;
-        font-size: 0.8125rem;
-        line-height: 1.55;
-        overflow-x: auto;
-      }
-
-      .code-block code {
-        background: none;
-        padding: 0;
-        font-size: inherit;
-        color: inherit;
-      }
-
-      .code-block .token.comment,
-      .code-block .token.prolog,
-      .code-block .token.doctype,
-      .code-block .token.cdata {
-        color: #6b7280;
-      }
-
-      .code-block .token.punctuation {
-        color: #4b5563;
-      }
-
-      .code-block .token.property,
-      .code-block .token.tag,
-      .code-block .token.constant,
-      .code-block .token.symbol,
-      .code-block .token.deleted {
-        color: #dc2626;
-      }
-
-      .code-block .token.boolean,
-      .code-block .token.number {
-        color: #b45309;
-      }
-
-      .code-block .token.selector,
-      .code-block .token.attr-name,
-      .code-block .token.string,
-      .code-block .token.char,
-      .code-block .token.builtin,
-      .code-block .token.inserted {
-        color: #047857;
-      }
-
-      .code-block .token.operator,
-      .code-block .token.entity,
-      .code-block .token.url,
-      .code-block .token.variable {
-        color: #2c2c2e;
-      }
-
-      .code-block .token.atrule,
-      .code-block .token.attr-value,
-      .code-block .token.function,
-      .code-block .token.class-name {
-        color: #2563eb;
-      }
-
-      .code-block .token.keyword {
-        color: #7c3aed;
-      }
-
-      .code-block .token.preprocessor,
-      .code-block .token.macro {
-        color: #9333ea;
-      }
-
-      h2 {
-        scroll-margin-top: 1.5rem;
-      }
-
-      h2 .heading-anchor {
-        display: inline-flex;
-        align-items: center;
-        margin-left: 0.45em;
-        opacity: 0;
-        color: #6b7280;
-        text-decoration: none;
-        vertical-align: middle;
-        transition: opacity 0.15s ease;
-      }
-
-      h2 .heading-anchor svg {
-        width: 0.9em;
-        height: 0.9em;
-        stroke: currentColor;
-        fill: none;
-        stroke-width: 2;
-        stroke-linecap: round;
-        stroke-linejoin: round;
-      }
-
-      h2:hover .heading-anchor,
-      h2:focus-within .heading-anchor {
-        opacity: 1;
-      }
-
-      h2 .heading-anchor:hover,
-      h2 .heading-anchor:focus {
-        color: #2563eb;
       }
     </style>
   </head>
@@ -977,17 +788,6 @@ os.system("./CG")</code></pre>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-clike.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-c.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
-    <script>
-      const headingLinkIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
-
-      document.querySelectorAll('h2[id]').forEach((heading) => {
-        const link = document.createElement('a');
-        link.className = 'heading-anchor';
-        link.href = `#${heading.id}`;
-        link.setAttribute('aria-label', 'Link to this section');
-        link.innerHTML = headingLinkIcon;
-        heading.appendChild(link);
-      });
-    </script>
+    <script src="../../assets/post.js"></script>
   </body>
 </html>
