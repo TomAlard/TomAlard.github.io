@@ -80,15 +80,15 @@
       Here's the original Parquet schema:
     </p>
 
-    <pre class="code-block"><code class="language-clike">int64   s2_cell_id        INTEGER(64, false);                  -- PLAIN
-binary  session_id        STRING;                              -- PLAIN
-int32   latitude_e6       INTEGER(32, true);                   -- DELTA_BINARY_PACKED
-int32   longitude_e6      INTEGER(32, true);                   -- DELTA_BINARY_PACKED
-int64   time_sent         TIMESTAMP(MILLIS, true);             -- DELTA_BINARY_PACKED
-int64   time_received     TIMESTAMP(MILLIS, true);             -- DELTA_BINARY_PACKED
-int32   speed             INTEGER(8, false);                   -- PLAIN
-int32   heading           INTEGER(16, false);                  -- PLAIN
-int32   hdop              INTEGER(16, false);                  -- PLAIN</code></pre>
+    <pre class="code-block"><code class="language-clike">int64   s2_cell_id     INTEGER(64, false);       -- PLAIN
+binary  session_id     STRING;                   -- PLAIN
+int32   latitude_e6    INTEGER(32, true);        -- DELTA_BINARY_PACKED
+int32   longitude_e6   INTEGER(32, true);        -- DELTA_BINARY_PACKED
+int64   time_sent      TIMESTAMP(MILLIS, true);  -- DELTA_BINARY_PACKED
+int64   time_received  TIMESTAMP(MILLIS, true);  -- DELTA_BINARY_PACKED
+int32   speed          INTEGER(8, false);        -- PLAIN
+int32   heading        INTEGER(16, false);       -- PLAIN
+int32   hdop           INTEGER(16, false);       -- PLAIN</code></pre>
 
     <p>
       The first type shows the physical type, the second type shows the logical type, and the comment
@@ -278,16 +278,16 @@ int32   hdop              INTEGER(16, false);                  -- PLAIN</code></
 
     <pre class="code-block"><code class="language-sql">CREATE TABLE gps
 (
-    s2_cell_id       UInt64                              CODEC(ZSTD(3)),
-    session_id       String                              CODEC(ZSTD(3)),
-    latitude_e6      Int32                               CODEC(DoubleDelta),
-    longitude_e6     Int32                               CODEC(DoubleDelta),
-    time_sent        DateTime('UTC')                     CODEC(DoubleDelta, ZSTD(3)),
-    received_latency Int32                               CODEC(T64, ZSTD(3)),
-    time_received    DateTime('UTC')                     ALIAS time_sent + received_latency,
-    speed            UInt8                               CODEC(Delta, ZSTD(3)),
-    heading          UInt16                              CODEC(ZSTD(3)),
-    hdop             UInt16                              CODEC(T64, ZSTD(3))
+    s2_cell_id        UInt64           CODEC(ZSTD(3)),
+    session_id        String           CODEC(ZSTD(3)),
+    latitude_e6       Int32            CODEC(DoubleDelta),
+    longitude_e6      Int32            CODEC(DoubleDelta),
+    time_sent         DateTime('UTC')  CODEC(DoubleDelta, ZSTD(3)),
+    received_latency  Int32            CODEC(T64, ZSTD(3)),
+    time_received     DateTime('UTC')  ALIAS time_sent + received_latency,
+    speed             UInt8            CODEC(Delta, ZSTD(3)),
+    heading           UInt16           CODEC(ZSTD(3)),
+    hdop              UInt16           CODEC(T64, ZSTD(3))
 )
 ENGINE = MergeTree
 ORDER BY (s2_cell_id, session_id, time_sent)</code></pre>
