@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Pcodec is awesome! 15% smaller and 2x faster than ClickHouse's DoubleDelta</title>
+    <meta name="description" content="Beating ClickHouse's DoubleDelta on our GPS ping columns with pcodec">
+    <meta property="og:title" content="Pcodec is awesome! 15% smaller and 2x faster than ClickHouse's DoubleDelta">
+    <meta property="og:description" content="Beating ClickHouse's DoubleDelta on our GPS ping columns with the newly added pcodec">
+    <meta property="og:image" content="https://tomalard.github.io/posts/pcodec-is-awesome/bytes_per_row.png">
+    <meta property="og:url" content="https://tomalard.github.io/posts/pcodec-is-awesome/">
+    <meta property="og:type" content="article">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Pcodec is awesome! 15% smaller and 2x faster than ClickHouse's DoubleDelta">
+    <meta name="twitter:description" content="Beating ClickHouse's DoubleDelta on our GPS ping columns with the newly added pcodec">
+    <meta name="twitter:image" content="https://tomalard.github.io/posts/pcodec-is-awesome/bytes_per_row.png">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/light.css">
+    <link rel="stylesheet" href="../../assets/post.css">
+  </head>
+  <body>
+    <header class="post-header">
+      <a class="post-author" href="../../">Tom Alard</a>
+      <time datetime="2026-10-18">October 18, 2026</time>
+    </header>
+
+    <h1>Pcodec is awesome! 15% smaller and 2x faster than ClickHouse's DoubleDelta</h1>
+
+    <p>
+      In <a href="../clickhouse-outcompresses-parquet-surprises-from-our-migration/">my previous post</a>,
+      I showed how ClickHouse outcompressed our tuned Parquet setup on our IoT dataset.
+      It did this by having better compression codecs than Parquet, and the star
+      of the show was the
+      <a href="https://clickhouse.com/docs/reference/statements/create/table/codec#doubledelta"><code>DoubleDelta</code></a>
+      codec. In this post, I will show the key ideas used by
+      <a href="https://github.com/pcodec/pcodec"><code>pcodec</code></a>, a more modern compression codec
+      added just days ago to ClickHouse,
+      to significantly beat <code>DoubleDelta</code> on both size and decompression speed,
+      at the cost of compression speed.
+    </p>
+
+    <h2 id="recap">Recap</h2>
+
+    <p>
+      A quick recap of the previous post. We ingest over a trillion GPS pings from vehicles per year,
+      and sort them in a columnar format such that consecutive pings from the same vehicle are next to each other.
+      The tuned Parquet schema looks like this:
+    </p>
+
+    <pre class="code-block"><code class="language-clike">int64   s2_cell_id     INTEGER(64, false);       -- PLAIN
+binary  session_id     STRING;                   -- PLAIN
+int32   latitude_e6    INTEGER(32, true);        -- DELTA_BINARY_PACKED
+int32   longitude_e6   INTEGER(32, true);        -- DELTA_BINARY_PACKED
+int64   time_sent      TIMESTAMP(MILLIS, true);  -- DELTA_BINARY_PACKED
+int64   time_received  TIMESTAMP(MILLIS, true);  -- DELTA_BINARY_PACKED
+int32   speed          INTEGER(8, false);        -- PLAIN
+int32   heading        INTEGER(16, false);       -- PLAIN
+int32   hdop           INTEGER(16, false);       -- PLAIN</code></pre>
+
+    <p>
+      And the ClickHouse schema looks like this:
+    </p>
+
+    <pre class="code-block"><code class="language-sql">CREATE TABLE gps
+(
+    s2_cell_id        UInt64           CODEC(ZSTD(3)),
+    session_id        String           CODEC(ZSTD(3)),
+    latitude_e6       Int32            CODEC(DoubleDelta),
+    longitude_e6      Int32            CODEC(DoubleDelta),
+    time_sent         DateTime('UTC')  CODEC(DoubleDelta, ZSTD(3)),
+    received_latency  Int32            CODEC(T64, ZSTD(3)),
+    time_received     DateTime('UTC')  ALIAS time_sent + received_latency,
+    speed             UInt8            CODEC(Delta, ZSTD(3)),
+    heading           UInt16           CODEC(ZSTD(3)),
+    hdop              UInt16           CODEC(T64, ZSTD(3))
+)
+ENGINE = MergeTree
+ORDER BY (s2_cell_id, session_id, time_sent)</code></pre>
+
+    <p>
+      The Parquet schema gets about 8.2 compressed bytes/row, while the ClickHouse schema
+      reaches about 5.9 bytes/row. A large part of the difference comes from the
+      latitude and longitude columns. They are a combined 3.92 compressed bytes/row
+      in Parquet vs 3.08 bytes/row in ClickHouse, and the difference can be explained
+      by the fact that <code>DoubleDelta</code> is a better "predictor" than
+      <code>DELTA_BINARY_PACKED</code>'s single delta:
+    </p>
+
+    <figure>
+      <img
+        src="../clickhouse-outcompresses-parquet-surprises-from-our-migration/double_delta.svg"
+        alt="GPS points along a highway, with Delta vectors between consecutive points and DoubleDelta corrections from the extended previous vector"
+      >
+    </figure>
+
+    <blockquote>
+      <p>
+        Imagine a vehicle is driving along a straight road. <code>Delta</code> stores the difference between
+        two consecutive points (blue vectors). <code>DoubleDelta</code> stores <i>the difference between
+        two consecutive deltas</i> (red vectors). Another way to think about it is that <code>DoubleDelta</code>
+        "predicts" the next point will be at the same delta offset as the previous point's delta,
+        and then "corrects" itself with a second offset. In this case, it is clear that the red vectors are
+        smaller than the blue vectors, which can intuitively explain why it compresses better.
+      </p>
+    </blockquote>
+
+    <h2 id="clickhouse-adds-pcodec">ClickHouse adds Pcodec!</h2>
+
+    <p>
+      The 5.9 compressed bytes/row result was sufficiently good for my employer, but on a personal level,
+      I was interested in seeing if it could be improved further. That's when I found out about pcodec.
+      It seemed ideal for my use case, and initial tests were very promising.
+    </p>
+
+    <p>
+      When I started doing research into pcodec last week, it was a rather niche codec, only implemented
+      in experimental file formats like <a href="https://vortex.dev/">Vortex</a>. I was quite surprised by this,
+      as the relative obscurity of the codec contrasted heavily with the remarkable results I was getting.
+      While there had
+      <a href="https://github.com/ClickHouse/ClickHouse/pull/62823">been</a>
+      <a href="https://github.com/ClickHouse/ClickHouse/pull/106222">some</a>
+      attempts to add pcodec to ClickHouse since at least 2024, these had not been successful.
+      I was initially planning to just write a more theoretical blog post about this codec, noting
+      that it was not really accessible right now.
+    </p>
+
+    <p>
+      That is, until just this week, when Alexey Milovidov himself finally
+      <a href="https://github.com/ClickHouse/ClickHouse/pull/110613">added</a>
+      a beta implementation of the codec to ClickHouse!
+      This means that, when ClickHouse 26.10 drops at the end of this month, everyone
+      running on the latest version of ClickHouse will have access to this new codec.
+      Suddenly, this blog post feels a lot more relevant!
+    </p>
+
+    <h2 id="results">Results</h2>
+
+    <p>
+      Let's show the results first. When we add pcodec to our toolbox of codecs, we drop down
+      to an incredible <strong>4.88 compressed bytes/row</strong>! Here's the updated schema:
+    </p>
+
+    <pre class="code-block"><code class="language-sql">SET enable_pco_codec = 1;  -- Needed as PCO is in beta
+
+CREATE TABLE gps
+(
+    s2_cell_id        UInt64          CODEC(ZSTD(3)),
+    session_id        String          CODEC(ZSTD(3)),
+    latitude_e6       Int32           CODEC(PCO),
+    longitude_e6      Int32           CODEC(PCO),
+    time_sent         DateTime('UTC') CODEC(PCO),
+    received_latency  Int32           CODEC(PCO),
+    time_received     DateTime('UTC') ALIAS time_sent + received_latency,
+    speed             UInt8           CODEC(Delta, ZSTD(3)),
+    heading           UInt16          CODEC(PCO),
+    hdop              UInt16          CODEC(PCO)
+)
+ENGINE = MergeTree
+ORDER BY (s2_cell_id, session_id, time_sent);</code></pre>
+
+    <p>
+      And here are the per-column results for the columns we switched to PCO:
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Column</th>
+          <th>Original Codec</th>
+          <th>Old B/row</th>
+          <th>PCO B/row</th>
+          <th>Diff</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>latitude_e6</code></td>
+          <td>DoubleDelta</td>
+          <td>1.477</td>
+          <td><strong>1.265</strong></td>
+          <td>−0.212</td>
+        </tr>
+        <tr>
+          <td><code>longitude_e6</code></td>
+          <td>DoubleDelta</td>
+          <td>1.605</td>
+          <td><strong>1.351</strong></td>
+          <td>−0.254</td>
+        </tr>
+        <tr>
+          <td><code>time_sent</code></td>
+          <td>DoubleDelta + ZSTD(3)</td>
+          <td>0.404</td>
+          <td><strong>0.308</strong></td>
+          <td>−0.096</td>
+        </tr>
+        <tr>
+          <td><code>received_latency</code></td>
+          <td>T64 + ZSTD(3)</td>
+          <td>0.223</td>
+          <td><strong>0.156</strong></td>
+          <td>−0.067</td>
+        </tr>
+        <tr>
+          <td><code>heading</code></td>
+          <td>ZSTD(3)</td>
+          <td>0.946</td>
+          <td><strong>0.671</strong></td>
+          <td>−0.275</td>
+        </tr>
+        <tr>
+          <td><code>hdop</code></td>
+          <td>T64 + ZSTD(3)</td>
+          <td>0.305</td>
+          <td><strong>0.239</strong></td>
+          <td>−0.066</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      PCO achieves this while beating <code>DoubleDelta</code> on decompression speed.
+      Compression speed is about 2x worse, but this is generally an acceptable trade-off.
+      All values in the table below are "X Million values per second (de)compressed":
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Column</th>
+          <th>Old Compress</th>
+          <th>New Compress</th>
+          <th>Old Decompress</th>
+          <th>New Decompress</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>latitude_e6</code></td>
+          <td><strong>141</strong></td>
+          <td>65</td>
+          <td>241</td>
+          <td><strong>506</strong></td>
+        </tr>
+        <tr>
+          <td><code>longitude_e6</code></td>
+          <td><strong>136</strong></td>
+          <td>63</td>
+          <td>239</td>
+          <td><strong>506</strong></td>
+        </tr>
+        <tr>
+          <td><code>time_sent</code></td>
+          <td><strong>166</strong></td>
+          <td>123</td>
+          <td>210</td>
+          <td><strong>642</strong></td>
+        </tr>
+        <tr>
+          <td><code>received_latency</code></td>
+          <td><strong>560</strong></td>
+          <td>145</td>
+          <td><strong>974</strong></td>
+          <td>626</td>
+        </tr>
+        <tr>
+          <td><code>heading</code></td>
+          <td><strong>93</strong></td>
+          <td>49</td>
+          <td><strong>548</strong></td>
+          <td>329</td>
+        </tr>
+        <tr>
+          <td><code>hdop</code></td>
+          <td><strong>274</strong></td>
+          <td>92</td>
+          <td><strong>849</strong></td>
+          <td>506</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      Compared to other codecs, PCO is surprisingly strong across the board.
+      It matched or beat our previous result on all columns I tried it on<sup><a href="#fn1" id="fnref1">1</a></sup>.
+    </p>
+
+    <h2 id="so-how-does-it-work">So... How does it work?</h2>
+
+    <p>
+      That's exactly what I wanted to know as well after Claude spit out the initial 4.88 bytes/row result.
+      So I went to the <a href="https://github.com/pcodec/pcodec">pcodec</a> GitHub repo where I found
+      this intimidating explanation:
+    </p>
+
+    <figure>
+      <img
+        src="pcodec_explanation.png"
+        alt="Very formal explanation of pcodec by the library author"
+      >
+    </figure>
+
+    <p>
+      Clearly, this codec is quite a bit more complex than most.
+      Luckily, after diving through the source code, it can be broken down
+      into three understandable steps. The first two steps are data preparation steps
+      that don't compress the data, while the final step <i>does</i> compress the data,
+      and is the most interesting part of the codec.
+    </p>
+
+    <h2 id="step-1-gcd-plus">Step 1: "GCD+"</h2>
+
+    <p>
+      <a href="https://clickhouse.com/docs/reference/statements/create/table/codec#gcd">GCD</a>
+      is a niche but useful data preparation codec in ClickHouse.
+      It calculates the greatest common divisor of all values in each block of data
+      (1 MB uncompressed by default), and divides each value by the GCD of its block.
+      In cases where your data has a GCD > 1 (e.g., you use second precision timestamps but
+      your timestamps are always on an exact minute: GCD of 60), it's a good idea to use this
+      codec, as it reduces absolute values of the data, making it easier to compress.
+    </p>
+
+    <p>
+      Unfortunately, GCD has a weakness: It can be "poisoned".
+      If all but one values in a block are divisible by 60, that one value will ruin the GCD
+      for the entire block, and you won't get the compression benefits. PCO solves this
+      by using heuristics to determine whether it's worth doing the "GCD" step anyway,
+      even if not all values are divisible by it. For values that <i>are</i> divisible by the "GCD",
+      it will just store the result of that division. For values that aren't, it will store both
+      the result of the division and its remainder.
+    </p>
+
+    <p>
+      Most of the time, this step doesn't help, as the data doesn't have a "GCD" > 1.
+      Therefore, I won't go into detail on the exact heuristics used.
+    </p>
+
+    <h2 id="step-2-delta-encoding">Step 2: Delta encoding</h2>
+
+    <p>
+      Step 2 is similar to ClickHouse's <code>Delta</code> and <code>DoubleDelta</code> codecs.
+      PCO takes a small sample of values, tries a few delta encoding setups, and runs it
+      through the final compression step to see if delta encoding can improve the result. It tries:
+    </p>
+
+    <ul>
+      <li>No delta encoding at all (no-op)</li>
+      <li>Delta encoding</li>
+      <li>If delta encoding was better than no delta encoding, it also tries delta of delta encoding (double delta)</li>
+      <li>And a couple other niche setups<sup><a href="#fn2" id="fnref2">2</a></sup></li>
+    </ul>
+
+    <p>
+      It then picks the setup on which the compressor for step 3 performed best.
+    </p>
+
+    <p>
+      For our latitude/longitude columns, PCO finds a "GCD" of 1, and finds that "delta of delta"
+      gets the best results. This means that up to this point, it exactly matches what
+      <code>DoubleDelta</code> does.
+    </p>
+
+    <h2 id="step-3-bit-packing">Step 3: Bit packing</h2>
+
+    <p>
+      Both PCO and <code>DoubleDelta</code> take the residuals from the previous step
+      and bit pack them. The difference lies in how that bit packing is done.
+    </p>
+
+    <p>
+      <code>DoubleDelta</code> uses a static table to convert the residuals to bits
+      in a single bitstream. The logic is as follows:
+    </p>
+
+    <p>For each "delta of delta" value <code>v</code>:</p>
+
+    <ol>
+      <li>If <code>v == 0</code>: Write 1-bit prefix (<code>0</code>)</li>
+      <li>Else if <code>-(2<sup>6</sup> - 1) < v < 2<sup>6</sup></code>: Write 2-bit prefix (<code>10</code>) and represent <code>v</code> with 7 bits</li>
+      <li>Else if <code>-(2<sup>8</sup> - 1) < v < 2<sup>8</sup></code>: Write 3-bit prefix (<code>110</code>) and represent <code>v</code> with 9 bits</li>
+      <li>Else if <code>-(2<sup>11</sup> - 1) < v < 2<sup>11</sup></code>: Write 4-bit prefix (<code>1110</code>) and represent <code>v</code> with 12 bits</li>
+      <li>Else if <code>v fits int32</code>: Write 5-bit prefix (<code>11110</code>) and represent <code>v</code> with 32 bits</li>
+      <li>Else: Write 5-bit prefix (<code>11111</code>) and represent <code>v</code> with 64 bits</li>
+    </ol>
+
+    <p>
+      We can visually represent the "investment" into each range of values with a treemap (interactive):
+    </p>
+
+    <figure class="figure-full">
+      <iframe
+        class="embed-frame"
+        src="double-delta-treemap.html"
+        title="Interactive treemap of DoubleDelta's prefix code: prefix 0 (v = 0, 1 bit) takes half the area, 10 (9 bits) a quarter, 110 (12 bits) an eighth, 1110 (16 bits) a sixteenth, and 11110 (37 bits) and 11111 (69 bits) a thirty-second each"
+        loading="lazy"
+      ></iframe>
+    </figure>
+
+    <p>
+      Any value that starts with a zero bit represents the value zero, meaning that zero
+      takes up half of the surface of our treemap. More generally, we can calculate the
+      "investment" into each value <code>v</code> as <code>1/2<sup>B</sup></code>,
+      where <code>B</code> is the number of bits required to represent <code>v</code>.
+      For example, <code>v = 0</code> requires 1 bit to represent, so the investment
+      is <code>1/2</code>, while <code>v = 1</code> requires 9 bits (2 prefix bits + 7 bits),
+      so the investment is <code>1/2<sup>9</sup> = 1/512</code>, which means we have invested
+      256 times more into <code>v = 0</code> than <code>v = 1</code>.
+    </p>
+
+    <p>
+      In this case, our "investment" is zero-sum. We have a fixed "budget" which we have to optimally
+      allocate over every value, so overinvesting in one value must mean underinvesting in another.
+      <b>The optimal investment in a value is sized proportionally to the number of times that value
+      occurs in the data</b>. If a value occurs with a probability of <code>1/1024</code>, we
+      should reserve <code>1/1024</code> of the surface of our treemap for that value.
+      Or in other words, we should use <code>log<sub>2</sub>(1024) = 10</code> bits to represent it.
+    </p>
+
+    <p>
+      So, how well does this static treemap perform on our data? Pretty poorly!
+      For the longitude column, a delta-of-delta of zero only happens 6.2% of the time,
+      while we were hoping for that number to be about 50%, meaning we've massively overinvested in zero.
+      Values in the <code>-255 < v < 256</code> range happen about 27.7% of the time, while we were hoping
+      for about 9%, and values in the <code>-2047 < v < 2048</code> happen about 32.7% of the time,
+      while we were hoping for about 5%. Clearly, we're leaving a lot on the table.
+    </p>
+
+    <h2 id="adaptive-binning">Adaptive binning</h2>
+
+    Could we somehow adapt our treemap to the data? The answer is yes, and this is exactly what pcodec does.
+    Here's what the treemap looks like for one chunk of the longitude column:
+
+    <figure class="figure-full">
+      <iframe
+        class="embed-frame"
+        src="pco-bins-treemap.html"
+        title="Interactive treemap of the 52 bins pcodec chose for one chunk of the longitude column: v = 0 gets 70/1024 of the budget (3.9 bits), most other bins cost 9 to 14 bits per value"
+        loading="lazy"
+      ></iframe>
+      <figcaption>
+        <i>
+          You may not like it, but this is what peak compression looks like
+        </i>
+      </figcaption>
+    </figure>
+
+    <p>
+      Pcodec splits the treemap into "bins". A bin consists of a lower bound <code>L</code> and
+      a width <code>B</code>. Values within a bin are represented with an offset of <code>B</code> bits
+      from the lower bound. For example, in the treemap above, the <code>[11, 18]</code> range is represented
+      by a bin with <code>L = 11</code> and <code>B = 3</code>, and <code>v = 14</code> can be expressed
+      by the bit representation of <code>v - L = 3</code>, or <code>011</code>.
+    </p>
+
+    <p>
+      We can now represent a value with two things: The bin it belongs to (comparable to prefix bits in DoubleDelta),
+      and its offset within that bin. Instead of writing everything to one bitstream like DoubleDelta,
+      pcodec separates these two. This will make decompression faster later, and also allows us
+      to use <a href="https://en.wikipedia.org/wiki/Asymmetric_numeral_systems">tANS</a> to encode
+      the bins. I'll skip the explanation of how tANS works<sup><a href="#fn3" id="fnref3">3</a></sup>,
+      but it basically allows us to use fractional bits to encode the sequence of bins,
+      letting us get much closer to the optimal "investment scheme" for our data distribution.
+    </p>
+
+    <p>
+      With this setup, pcodec gets very close to the optimal "investment scheme"
+      or allocation of resources per value in the distribution.
+      DoubleDelta gets an average of 12.83 bits per value with its static table,
+      while pcodec reaches 10.79, with the theoretically optimal allocation (also known as
+      Shannon entropy) reaching 10.53. When you divide those figures by eight to get bytes/row,
+      the results almost exactly match the per-column compression results from above
+      (1.604 vs 1.605 for DoubleDelta and 1.349 vs 1.351 for pcodec).
+    </p>
+
+    <h2 id="decompression">Decompression</h2>
+
+    <p>
+      One last thing: Pcodec also crushes DoubleDelta on decompression, despite the
+      two codecs being quite similar. If anything, you would intuitively expect
+      DoubleDelta to be faster due to the static table.
+      However, DoubleDelta has a fatal flaw here: It writes both prefix and value bits
+      to the same, single bitstream. This makes sense when you want an <i>online</i> codec.
+      In other words, when you want to be able to easily append to the output when a new
+      value comes in, which was the use case Facebook had when they came up with this codec
+      in 2015. Unfortunately, ClickHouse doesn't need online codecs, and this setup
+      has a real downside: It destroys decompression speed.
+    </p>
+
+    <p>
+      When you write prefix and value bits to a single bitstream, you don't know where
+      value <code>i</code> even starts in the bitstream until you've decompressed value <code>i-1</code>.
+      You're strictly limited to processing the stream serially, which stops you from using
+      SIMD, and is terrible for your CPU's instruction pipeline.
+    </p>
+
+    <p>
+      Pcodec instead separates the "prefix bits" and offset bits. That way, the decompressor
+      first starts by decompressing all the prefix bits, and then knows where each value starts
+      in the other stream. With some low level magic, this unlocks SIMD.
+      Pcodec also writes to multiple different bitstreams. That way, the CPU can process multiple
+      values at once instead of being stuck in a serial chain.
+    </p>
+
+    <p>
+      Of course, the biggest downside to this codec is that all the added complexity makes
+      the compression step quite a bit slower. But in many OLAP contexts, that's a price
+      you're happy to pay for the other benefits. I'll probably be using it
+      a lot as soon as we upgrade to ClickHouse 26.10 internally :)
+    </p>
+
+    <ol class="footnotes">
+      <li id="fn1">
+        PCO couldn't be used for the <code>session_id</code> column, as it only works
+        on numerical data. On the speed column, it matched Delta + ZSTD(3) on bytes/row exactly.
+        Delta + ZSTD(3) (de)compresses better though, so we kept that instead.
+        <a class="footnote-back" href="#fnref1" aria-label="Back to reference">↩</a>
+      </li>
+      <li id="fn2">
+        It tries a "lookback" scheme where the delta is calculated based on e.g. the value
+        from 2 or 3 positions before, instead of the previous value. If delta of delta encoding
+        improves on delta encoding, it also keeps trying higher orders of delta encoding,
+        until it reaches an order that doesn't improve on the previous one (with a max order of 7).
+        This is cool in theory, but in practice, I find it hard to even come up with a
+        realistic dataset that would benefit from, e.g., "delta of delta of delta encoding".
+        <a class="footnote-back" href="#fnref2" aria-label="Back to reference">↩</a>
+      </li>
+      <li id="fn3">
+        Partly because it would take too long, and partly because I don't understand it myself yet :|
+        <a class="footnote-back" href="#fnref3" aria-label="Back to reference">↩</a>
+      </li>
+    </ol>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-clike.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-sql.min.js"></script>
+    <script src="../../assets/post.js"></script>
+  </body>
+</html>

@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pcodec Bin Code Space</title>
+<style>
+/* Layout: one canvas filling the frame with a floating tooltip. */
+:root {
+  --ink: #2C2C2A;
+  --sans: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  color-scheme: light;
+}
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #ffffff;
+  color: var(--ink);
+  font-family: var(--sans);
+}
+#stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+}
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: pan-y;
+  outline: none;
+}
+canvas.zoomed { touch-action: none; cursor: grab; }
+canvas.dragging { cursor: grabbing; }
+.tip {
+  position: absolute;
+  display: none;
+  padding: 7px 9px;
+  border: 1.5px solid var(--ink);
+  border-radius: 2px;
+  background: #ffffff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+}
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="map" tabindex="0" aria-label="Treemap of the bins pcodec chose for one chunk of the longitude column. Use plus and minus to zoom, arrow keys to pan, 0 to reset."></canvas>
+  <div class="tip" id="tip"></div>
+</div>
+<script>
+// The bins pcodec chose for the delta-of-deltas of the first chunk (262,144 values, one
+// ClickHouse block) of the longitude column, from `pcodec inspect`: [ANS weight, lower, offset bits].
+// A value v is stored in the last bin whose lower <= v: an ANS label costing log2(1024 / weight)
+// bits, then v - lower in offset-bits raw bits.
+const ANS_SIZE = 1024;
+const BIN_DATA = [
+  [4, -89719867, 27], [4, -191653, 17], [4, -77373, 16], [4, -18014, 14], [7, -3468, 11],
+  [12, -1753, 9], [4, -1254, 7], [16, -1165, 8], [12, -914, 7], [8, -791, 6],
+  [4, -727, 5], [20, -697, 7], [28, -576, 7], [40, -450, 7], [60, -324, 7],
+  [20, -196, 5], [48, -164, 6], [33, -102, 5], [19, -70, 4], [53, -54, 5],
+  [20, -22, 3], [12, -14, 2], [15, -10, 2], [18, -6, 2], [13, -2, 1],
+  [70, 0, 0], [13, 1, 1], [18, 3, 2], [14, 7, 2], [22, 11, 3],
+  [17, 19, 3], [28, 27, 4], [40, 43, 5], [4, 75, 2], [56, 79, 6],
+  [40, 143, 6], [32, 207, 6], [48, 270, 7], [4, 397, 4], [32, 410, 7],
+  [12, 538, 6], [20, 601, 7], [8, 729, 6], [12, 791, 7], [16, 912, 8],
+  [4, 1156, 7], [12, 1249, 9], [8, 1750, 11], [4, 3419, 14], [4, 18307, 16],
+  [4, 77590, 17], [4, 192092, 27],
+];
+const WORLD_W = 2;
+const WORLD_H = 1;
+const MIN_CELL = 12;        // px: cells smaller than this are drawn as groups of consecutive codes
+const MAX_ZOOM = 2 ** 26;   // enough to read individual values in the 27-bit bins
+
+// Same colour scale as the DoubleDelta treemap: a value's colour depends only on its cost in bits,
+// so equal colours mean equal cost across both charts.
+const COLOR_STOPS = [[1, '#EEEDFE'], [9, '#CECBF6'], [12, '#AFA9EC'], [16, '#7F77DD'], [37, '#534AB7'], [69, '#3C3489']];
+const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+function colorFor(bits) {
+  let i = 1;
+  while (i < COLOR_STOPS.length - 1 && bits > COLOR_STOPS[i][0]) i++;
+  const [b0, c0] = COLOR_STOPS[i - 1];
+  const [b1, c1] = COLOR_STOPS[i];
+  const f = Math.min(1, Math.max(0, (bits - b0) / (b1 - b0)));
+  const a = hexRgb(c0);
+  const b = hexRgb(c1);
+  return a.map((x, k) => Math.round(x + (b[k] - x) * f));
+}
+const css = (rgb) => `rgb(${rgb.join(',')})`;
+const lighten = (rgb, f) => rgb.map((x) => Math.round(x + (255 - x) * f));
+const darkFill = (rgb) => (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255 < 0.6;
+const fmt = (v) => v.toLocaleString('en-US').replace('-', '−');
+
+const TIERS = BIN_DATA.map(([weight, lower, ob], i) => {
+  const next = BIN_DATA[i + 1];
+  const top = lower + 2 ** ob - 1;
+  const usedTop = next ? Math.min(top, next[1] - 1) : top;
+  const ansBits = Math.log2(ANS_SIZE / weight);
+  const rgb = colorFor(ansBits + ob);
+  const dark = darkFill(rgb);
+  return {
+    weight, ob, ansBits,
+    dataBits: ob,
+    lower: BigInt(lower),
+    limit: next ? BigInt(next[1]) : null,   // values from here on belong to the next bin
+    bits: ansBits + ob,
+    rgb,
+    fill: css(rgb),
+    unusedFill: css(lighten(rgb, 0.75)),
+    ink: dark ? '#ffffff' : '#26215C',
+    range: ob === 0 ? fmt(lower) : `${fmt(lower)} … ${fmt(usedTop)}`,
+  };
+});
+
+// Strip treemap: bins stay in value order and fill full-width rows like lines of text
+// (left to right, top to bottom). Each row's height is proportional to the weight it holds;
+// a new row starts when adding the next bin would make the row's tiles less square on average.
+function layout(items, W, H) {
+  const total = items.reduce((s, t) => s + t.weight, 0);
+  const rowAspect = (row) => {
+    const sum = row.reduce((s, t) => s + t.weight, 0);
+    const h = (sum / total) * H;
+    return row.reduce((s, t) => {
+      const w = (t.weight / sum) * W;
+      return s + Math.max(w / h, h / w);
+    }, 0) / row.length;
+  };
+  const rows = [];
+  let row = [];
+  for (const t of items) {
+    if (row.length && rowAspect([...row, t]) > rowAspect(row)) { rows.push(row); row = []; }
+    row.push(t);
+  }
+  rows.push(row);
+  // A greedy strip layout can leave a few light bins as a sliver of a last row; fold them into
+  // the previous row when that makes the tiles squarer overall.
+  while (rows.length > 1) {
+    const [a, b] = rows.slice(-2);
+    const separate = (rowAspect(a) * a.length + rowAspect(b) * b.length) / (a.length + b.length);
+    if (rowAspect([...a, ...b]) > separate) break;
+    rows.splice(-2, 2, [...a, ...b]);
+  }
+  let y = 0;
+  for (const r of rows) {
+    const sum = r.reduce((s, t) => s + t.weight, 0);
+    const h = (sum / total) * H;
+    let x = 0;
+    for (const t of r) {
+      const w = (t.weight / sum) * W;
+      t.rect = { x, y, w, h };
+      x += w;
+    }
+    y += h;
+  }
+}
+layout(TIERS, WORLD_W, WORLD_H);
+const SANS = '-apple-system, "Segoe UI", Helvetica, Arial, sans-serif';
+const MONO = 'SFMono-Regular, Menlo, Consolas, monospace';
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const stage = document.getElementById('stage');
+const canvas = document.getElementById('map');
+const ctx = canvas.getContext('2d');
+const tip = document.getElementById('tip');
+
+TIERS.forEach((t, i) => {
+  const r = t.rect;
+  t.index = i;
+  // The bin's 2^offsetBits slots form a grid of (near) square cells, numbered in
+  // value order left to right, top to bottom.
+  let { w, h } = r;
+  let colBits = 0;
+  for (let b = 0; b < t.dataBits; b++) {
+    if (w > h) { w /= 2; colBits++; } else h /= 2;
+  }
+  t.cols = 2 ** colBits;
+  t.rows = 2 ** (t.dataBits - colBits);
+  t.cellW = w;
+  t.cellH = h;
+});
+
+// Slot i holds offset i, i.e. the value lower + i.
+const valueOf = (t, i) => t.lower + i;
+const isUnused = (t, i) => t.limit !== null && valueOf(t, i) >= t.limit;
+
+const bitsNum = (t) => t.bits.toFixed(1);
+
+// ---- View -------------------------------------------------------------------
+
+let W = 0;
+let H = 0;
+let dpr = 1;
+let view = { x0: 0, y0: 0, s: 1 };   // world coords of the top-left corner, px per world unit
+let pointer = null;                  // last hover/tap position in CSS px
+let hoverTier = null;
+let hovered = null;
+let dragging = false;
+let anim = 0;
+
+const fitScale = () => Math.min(W / WORLD_W, H / WORLD_H);
+const zoomFactor = () => view.s / fitScale();
+
+function clampView(v) {
+  const s = Math.min(Math.max(v.s, fitScale()), fitScale() * MAX_ZOOM);
+  const clampAxis = (x0, viewPx, worldSize) => {
+    const span = viewPx / s;
+    return span >= worldSize ? (worldSize - span) / 2 : Math.min(Math.max(x0, 0), worldSize - span);
+  };
+  return { s, x0: clampAxis(v.x0, W, WORLD_W), y0: clampAxis(v.y0, H, WORLD_H) };
+}
+
+function zoomedView(from, px, py, factor) {
+  const wx = from.x0 + px / from.s;
+  const wy = from.y0 + py / from.s;
+  const s = from.s * factor;
+  return clampView({ s, x0: wx - px / s, y0: wy - py / s });
+}
+
+function setView(v) {
+  view = clampView(v);
+  canvas.classList.toggle('zoomed', zoomFactor() > 1.001);
+  requestDraw();
+}
+
+function animateTo(target) {
+  cancelAnimationFrame(anim);
+  target = clampView(target);
+  if (reduceMotion) { setView(target); return; }
+  const from = view;
+  const fc = { x: from.x0 + W / 2 / from.s, y: from.y0 + H / 2 / from.s };
+  const tc = { x: target.x0 + W / 2 / target.s, y: target.y0 + H / 2 / target.s };
+  const t0 = performance.now();
+  const step = (now) => {
+    const t = Math.min(1, (now - t0) / 280);
+    const e = 1 - (1 - t) ** 3;
+    const s = Math.exp(Math.log(from.s) + (Math.log(target.s) - Math.log(from.s)) * e);
+    const cx = fc.x + (tc.x - fc.x) * e;
+    const cy = fc.y + (tc.y - fc.y) * e;
+    setView({ s, x0: cx - W / 2 / s, y0: cy - H / 2 / s });
+    if (t < 1) anim = requestAnimationFrame(step);
+  };
+  anim = requestAnimationFrame(step);
+}
+
+const zoomBy = (px, py, factor) => animateTo(zoomedView(view, px, py, factor));
+const resetZoom = () => animateTo({ s: fitScale(), x0: 0, y0: 0 });
+
+function screenRect(r) {
+  return { x: (r.x - view.x0) * view.s, y: (r.y - view.y0) * view.s, w: r.w * view.s, h: r.h * view.s };
+}
+
+const onScreen = (sr) => sr.x < W && sr.y < H && sr.x + sr.w > 0 && sr.y + sr.h > 0;
+
+// Keep huge rectangles (deep zoom) within a sane range before handing them to the canvas.
+function clipToViewport(sr, pad = 4) {
+  const x = Math.max(sr.x, -pad);
+  const y = Math.max(sr.y, -pad);
+  return { x, y, w: Math.min(sr.x + sr.w, W + pad) - x, h: Math.min(sr.y + sr.h, H + pad) - y };
+}
+
+// Bins whose individual values get cells big enough to label are always shown value by value.
+const EXPAND_CELL_W = 30;   // px
+const EXPAND_CELL_H = 20;   // px
+const cellsReadable = (t) => t.cellW * view.s >= EXPAND_CELL_W && t.cellH * view.s >= EXPAND_CELL_H;
+const revealed = (t) => t.dataBits > 0 && (cellsReadable(t) || t === hoverTier || zoomFactor() > 1.5);
+
+// When cells are too small to draw one by one, draw runs of consecutive codes instead:
+// segments of a row, or bands of whole rows. Either way a group is a contiguous range of codes.
+function grouping(t) {
+  const cw = t.cellW * view.s;
+  const ch = t.cellH * view.s;
+  const pow2Above = (x) => 2 ** Math.ceil(Math.log2(x));
+  if (ch >= MIN_CELL) return { gw: cw >= MIN_CELL ? 1 : Math.min(t.cols, pow2Above(MIN_CELL / cw)), gh: 1 };
+  return { gw: t.cols, gh: Math.min(t.rows, pow2Above(MIN_CELL / ch)) };
+}
+
+function groupAt(t, g, gr, gc) {
+  const rect = {
+    x: t.rect.x + gc * g.gw * t.cellW,
+    y: t.rect.y + gr * g.gh * t.cellH,
+    w: g.gw * t.cellW,
+    h: g.gh * t.cellH,
+  };
+  const first = BigInt(gr * g.gh) * BigInt(t.cols) + BigInt(gc * g.gw);
+  return { t, rect, first, last: first + BigInt(g.gw) * BigInt(g.gh) - 1n };
+}
+
+const contains = (r, x, y) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+
+function locate(px, py) {
+  const wx = view.x0 + px / view.s;
+  const wy = view.y0 + py / view.s;
+  const t = TIERS.find((tier) => contains(tier.rect, wx, wy));
+  if (!t) return { tier: null, group: null };
+  hoverTier = t;
+  if (!revealed(t)) return { tier: t, group: null };
+  const g = grouping(t);
+  const gc = Math.min(t.cols / g.gw - 1, Math.floor((wx - t.rect.x) / (g.gw * t.cellW)));
+  const gr = Math.min(t.rows / g.gh - 1, Math.floor((wy - t.rect.y) / (g.gh * t.cellH)));
+  return { tier: t, group: groupAt(t, g, gr, gc) };
+}
+
+// ---- Drawing ----------------------------------------------------------------
+
+// Largest font size (<= max) at which `text` fits in maxW.
+function fitFont(text, font, max, maxW) {
+  ctx.font = font(max);
+  const w = ctx.measureText(text).width;
+  return w <= maxW ? max : max * maxW / w;
+}
+
+function drawLines(lines, sr) {
+  // lines: [{ text, font: (size) => css, size, color }]; drop lines from the bottom until the stack fits.
+  const pad = Math.min(6, sr.w * 0.08, sr.h * 0.08);
+  let fitted = [];
+  for (let count = lines.length; count > 0; count--) {
+    fitted = lines.slice(0, count).map((l) => ({ ...l, size: fitFont(l.text, l.font, l.size, sr.w - 2 * pad) }));
+    const height = fitted.reduce((sum, l) => sum + l.size * 1.3, 0);
+    if (height <= sr.h - 2 * pad && fitted.every((l, i) => l.size >= (i === 0 ? 8 : 9))) break;
+    fitted = [];
+  }
+  if (!fitted.length) return;
+  const height = fitted.reduce((sum, l) => sum + l.size * 1.3, 0);
+  let y = sr.y + sr.h / 2 - height / 2;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const l of fitted) {
+    ctx.font = l.font(l.size);
+    ctx.fillStyle = l.color;
+    ctx.fillText(l.text, sr.x + sr.w / 2, y + l.size * 0.65);
+    y += l.size * 1.3;
+  }
+}
+
+function drawSummary(t) {
+  const sr = screenRect(t.rect);
+  const box = clipToViewport(sr);
+  ctx.fillStyle = t.fill;
+  ctx.fillRect(box.x, box.y, box.w, box.h);
+  const md = Math.min(sr.w, sr.h);
+  const big = Math.min(22, Math.max(9, md * 0.2));
+  drawLines([
+    { text: t.range, font: (s) => `600 ${s}px ${SANS}`, size: big, color: t.ink },
+  ], clipToViewport(sr, 0));
+}
+
+function drawCells(t) {
+  const g = grouping(t);
+  const gW = g.gw * t.cellW;
+  const gH = g.gh * t.cellH;
+  const c0 = Math.max(0, Math.floor((view.x0 - t.rect.x) / gW));
+  const c1 = Math.min(t.cols / g.gw - 1, Math.floor((view.x0 + W / view.s - t.rect.x) / gW));
+  const r0 = Math.max(0, Math.floor((view.y0 - t.rect.y) / gH));
+  const r1 = Math.min(t.rows / g.gh - 1, Math.floor((view.y0 + H / view.s - t.rect.y) / gH));
+  for (let gr = r0; gr <= r1; gr++) {
+    for (let gc = c0; gc <= c1; gc++) drawGroup(groupAt(t, g, gr, gc));
+  }
+}
+
+function drawGroup(grp) {
+  const t = grp.t;
+  const sr = screenRect(grp.rect);
+  const gap = Math.min(sr.w, sr.h) >= 5 ? 0.5 : 0;
+  const box = clipToViewport({ x: sr.x + gap, y: sr.y + gap, w: sr.w - 2 * gap, h: sr.h - 2 * gap });
+  const unused = isUnused(t, grp.first);
+  ctx.fillStyle = unused ? t.unusedFill : t.fill;
+  ctx.fillRect(box.x, box.y, box.w, box.h);
+  if (grp.first !== grp.last || sr.w < 14 || sr.h < 10) return;
+
+  const ink = unused ? '#26215C' : t.ink;
+  const valueSize = Math.min(20, sr.h * 0.42);
+  drawLines([
+    { text: fmt(valueOf(t, grp.first)), font: (s) => `600 ${s}px ${SANS}`, size: valueSize, color: ink },
+    { text: unused ? 'unused' : `${bitsNum(t)} bits`, font: (s) => `${s}px ${SANS}`, size: Math.min(12, valueSize * 0.6), color: ink },
+  ], clipToViewport(sr, 0));
+}
+
+function draw() {
+  if (pointer && !dragging) ({ tier: hoverTier, group: hovered } = locate(pointer.x, pointer.y));
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, W, H);
+
+  for (const t of TIERS) {
+    const sr = screenRect(t.rect);
+    if (!onScreen(sr)) continue;
+    const inset = Math.min(1.5, Math.min(sr.w, sr.h) / 8);
+    const clip = clipToViewport({ x: sr.x + inset, y: sr.y + inset, w: sr.w - 2 * inset, h: sr.h - 2 * inset });
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(clip.x, clip.y, clip.w, clip.h);
+    ctx.clip();
+    if (revealed(t)) drawCells(t);
+    else drawSummary(t);
+    ctx.restore();
+  }
+
+  const outlined = hovered ? hovered.rect : hoverTier && !revealed(hoverTier) ? hoverTier.rect : null;
+  if (outlined && !dragging) {
+    const sr = clipToViewport(screenRect(outlined));
+    ctx.strokeStyle = '#2C2C2A';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(sr.x + 0.75, sr.y + 0.75, sr.w - 1.5, sr.h - 1.5);
+  }
+
+  updateTip();
+}
+
+let drawQueued = false;
+function requestDraw() {
+  if (drawQueued) return;
+  drawQueued = true;
+  requestAnimationFrame(() => { drawQueued = false; draw(); });
+}
+
+// ---- Tooltip ----------------------------------------------------------------
+
+function tipText() {
+  if (!hoverTier) return '';
+  const t = hoverTier;
+  const g = hovered;
+  if (!g) return t.range;
+  const a = valueOf(g.t, g.first);
+  const b = valueOf(g.t, g.last);
+  const range = g.first === g.last ? `v = ${fmt(a)}` : `v = ${fmt(a)} … ${fmt(b)}`;
+  if (isUnused(t, g.first)) return `${range} · unused (stored in the next bin)`;
+  return range;
+}
+
+function updateTip() {
+  const text = pointer && !dragging ? tipText() : '';
+  if (!text) { tip.style.display = 'none'; return; }
+  tip.textContent = text;
+  tip.style.display = 'block';
+  const tw = tip.offsetWidth;
+  const th = tip.offsetHeight;
+  let x = pointer.x + 14;
+  let y = pointer.y + 14;
+  if (x + tw > W - 4) x = Math.max(4, pointer.x - 14 - tw);
+  if (y + th > H - 4) y = Math.max(4, pointer.y - 14 - th);
+  tip.style.left = `${x}px`;
+  tip.style.top = `${y}px`;
+}
+
+// ---- Input ------------------------------------------------------------------
+
+const pointers = new Map();
+let press = null;
+
+function localPos(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+canvas.addEventListener('pointerdown', (e) => {
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, localPos(e));
+  press = pointers.size === 1 ? { ...localPos(e), moved: false } : null;
+});
+
+canvas.addEventListener('pointermove', (e) => {
+  const p = localPos(e);
+  const prev = pointers.get(e.pointerId);
+  if (prev) {
+    pointers.set(e.pointerId, p);
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      const other = a === p ? b : a;
+      const oldDist = Math.hypot(prev.x - other.x, prev.y - other.y);
+      const newDist = Math.hypot(p.x - other.x, p.y - other.y);
+      const mid = { x: (p.x + other.x) / 2, y: (p.y + other.y) / 2 };
+      const oldMid = { x: (prev.x + other.x) / 2, y: (prev.y + other.y) / 2 };
+      cancelAnimationFrame(anim);
+      const v = zoomedView(view, mid.x, mid.y, oldDist > 0 ? newDist / oldDist : 1);
+      setView({ s: v.s, x0: v.x0 - (mid.x - oldMid.x) / v.s, y0: v.y0 - (mid.y - oldMid.y) / v.s });
+      dragging = true;
+      return;
+    }
+    if (press) {
+      if (!press.moved && Math.hypot(p.x - press.x, p.y - press.y) > 4) press.moved = true;
+      if (press.moved && zoomFactor() > 1.001) {
+        cancelAnimationFrame(anim);
+        dragging = true;
+        canvas.classList.add('dragging');
+        setView({ s: view.s, x0: view.x0 - (p.x - prev.x) / view.s, y0: view.y0 - (p.y - prev.y) / view.s });
+        return;
+      }
+    }
+  }
+  if (e.pointerType === 'mouse') {
+    pointer = p;
+    requestDraw();
+  }
+});
+
+function endPress(e) {
+  pointers.delete(e.pointerId);
+  if (press && !press.moved && e.type === 'pointerup' && e.pointerType !== 'mouse') pointer = localPos(e);
+  if (pointers.size === 0) {
+    press = null;
+    dragging = false;
+    canvas.classList.remove('dragging');
+  }
+  requestDraw();
+}
+canvas.addEventListener('pointerup', endPress);
+canvas.addEventListener('pointercancel', endPress);
+
+canvas.addEventListener('pointerleave', (e) => {
+  if (e.pointerType !== 'mouse' || pointers.size) return;
+  pointer = null;
+  hoverTier = null;
+  hovered = null;
+  requestDraw();
+});
+
+canvas.addEventListener('dblclick', (e) => {
+  const p = localPos(e);
+  zoomBy(p.x, p.y, e.shiftKey ? 1 / 4 : 4);
+});
+
+canvas.addEventListener('wheel', (e) => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  e.preventDefault();
+  cancelAnimationFrame(anim);
+  const p = localPos(e);
+  const delta = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+  setView(zoomedView(view, p.x, p.y, Math.exp(-delta * 0.0025)));
+}, { passive: false });
+
+canvas.addEventListener('keydown', (e) => {
+  const pan = (dx, dy) => setView({ s: view.s, x0: view.x0 + dx / view.s, y0: view.y0 + dy / view.s });
+  const actions = {
+    '+': () => zoomBy(W / 2, H / 2, 2),
+    '=': () => zoomBy(W / 2, H / 2, 2),
+    '-': () => zoomBy(W / 2, H / 2, 1 / 2),
+    '0': resetZoom,
+    ArrowLeft: () => pan(-60, 0),
+    ArrowRight: () => pan(60, 0),
+    ArrowUp: () => pan(0, -60),
+    ArrowDown: () => pan(0, 60),
+  };
+  if (actions[e.key]) { e.preventDefault(); actions[e.key](); }
+});
+
+// ---- Sizing -----------------------------------------------------------------
+
+new ResizeObserver(() => {
+  const z = W ? zoomFactor() : 1;
+  const cx = W ? view.x0 + W / 2 / view.s : WORLD_W / 2;
+  const cy = H ? view.y0 + H / 2 / view.s : WORLD_H / 2;
+  W = stage.clientWidth;
+  H = stage.clientHeight;
+  dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+  const s = fitScale() * z;
+  setView({ s, x0: cx - W / 2 / s, y0: cy - H / 2 / s });
+  draw();
+}).observe(stage);
+</script>
+</body>
+</html>

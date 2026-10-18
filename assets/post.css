@@ -46,10 +46,24 @@ figure {
   margin-top: 1.5rem;
 }
 
+.figure-full {
+  margin-left: 0;
+  margin-right: 0;
+}
+
 figure img {
   max-width: 100%;
   height: auto;
   margin: 0;
+}
+
+.embed-frame {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  aspect-ratio: 2 / 1;
+  border: 1.5px solid #2c2c2e;
+  border-radius: 2px;
 }
 
 figcaption {
@@ -73,6 +87,18 @@ figcaption {
   font-size: 0.8125rem;
   font-style: italic;
   color: #6b7280;
+}
+
+blockquote {
+  margin: 1.5rem 0;
+  padding: 0 0 0 1rem;
+  border-left: 3px solid #d1d5db;
+  color: inherit;
+  background: none;
+}
+
+blockquote p {
+  margin: 0;
 }
 
 .table-note code {
